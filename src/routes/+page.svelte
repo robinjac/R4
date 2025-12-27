@@ -1,3 +1,11 @@
-<h1>Welcome to your library project</h1>
-<p>Create your package using @sveltejs/package and preview/showcase your work with SvelteKit</p>
-<p>Visit <a href="https://svelte.dev/docs/kit">svelte.dev/docs/kit</a> to read the documentation</p>
+<script>
+    import Stack from "../components/Stack.svelte";
+    import View from "../components/View.svelte";
+
+</script>
+
+<Stack gap="m" vertical align="center">
+    <View>element 1</View>
+    <View>element 2</View>
+    <View>element 3</View>
+</Stack>
