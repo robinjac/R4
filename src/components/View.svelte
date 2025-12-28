@@ -4,7 +4,7 @@
      type Props = {
         padding?: { top?: Spacing; bottom?: Spacing; left?: Spacing; right?: Spacing } | Spacing;
         border?: { top?: boolean; bottom?: boolean; left?: boolean; right?: boolean } | boolean;
-        radius?: { top?: Spacing; bottom?: Spacing; left?: Spacing; right?: Spacing } | Spacing;
+        rounded?: { top?: Spacing; bottom?: Spacing; left?: Spacing; right?: Spacing } | boolean;
         background?: Background; 
         children: Snippet;
     };
@@ -26,29 +26,32 @@
         return "0";
     };
 
-    const fromRadius = (radius: Props["radius"]) => {
-        if (typeof radius === "string") {
-            return `var(--size-${radius})`;
+    const fromRounded = (rounded: Props["rounded"]) => {
+        if (typeof rounded === "string") {
+            return `var(--size-${rounded})`;
         }
-        
-        if (typeof radius === "object") {
+
+        if(rounded === true) {
+            return "var(--radius-m)";
+        }
+
+        if (typeof rounded === "object") {
+
             return `
-                ${radius.top && radius.left ? `var(--size-${radius.top})` : "0"} 
-                ${radius.top && radius.right ? `var(--size-${radius.right})` : "0"} 
-                ${radius.bottom && radius.right ? `var(--size-${radius.bottom})` : "0"} 
-                ${radius.bottom && radius.left ? `var(--size-${radius.left})` : "0"}
+                ${rounded.top && rounded.left ? `var(--size-${rounded.top})` : "0"} 
+                ${rounded.top && rounded.right ? `var(--size-${rounded.right})` : "0"} 
+                ${rounded.bottom && rounded.right ? `var(--size-${rounded.bottom})` : "0"} 
+                ${rounded.bottom && rounded.left ? `var(--size-${rounded.left})` : "0"}
             `;
         }
-
-        return "0";
     };
 
-    const { children, padding, radius, background }: Props = $props();;
+    const { children, padding, rounded = false, background }: Props = $props();;
 </script>
 
 <div 
     style:padding={fromPadding(padding)} 
-    style:border-radius={fromRadius(radius)} 
+    style:border-radius={fromRounded(rounded) ?? "0"} 
     style:background-color={typeof background === "string" ? `var(--color-${background})` : undefined }
 >
     {@render children()}

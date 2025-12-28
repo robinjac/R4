@@ -9,6 +9,10 @@
   --space-7: 48px;
   --space-8: 64px;
 
+  --radius-s: var(--space-1);
+  --radius-m: var(--space-2);
+  --radius-l: var(--space-3);
+
   /* Semantic mapping (mobile first) */
   --size-xxs: var(--space-1);
   --size-xs: var(--space-2);
@@ -22,6 +26,10 @@
 /* Tablet overrides */
 @media (min-width: 768px) {
   :root {
+    --radius-s: var(--space-2);
+    --radius-m: var(--space-3);
+    --radius-l: var(--space-4);
+
     --size-xxs: var(--space-2);
     --size-xs: var(--space-3);
     --size-s: var(--space-4);
@@ -35,6 +43,10 @@
 /* Desktop overrides */
 @media (min-width: 1024px) {
   :root {
+    --radius-s: var(--space-3);
+    --radius-m: var(--space-4);
+    --radius-l: var(--space-5);
+
     --space-xxs: var(--space-3);
     --space-xs: var(--space-4);
     --space-s: var(--space-5);
