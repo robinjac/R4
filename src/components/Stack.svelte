@@ -5,11 +5,11 @@
     type Props = {
         gap?: Spacing;
         vertical?: boolean;
-        align?: "flex-start" | "center" | "flex-end" | "stretch" | "baseline";
+        align?: "start" | "center" | "end" | "stretch"; 
         children: Snippet;
     };
     
-    const { children, gap, vertical = false, align }: Props = $props();
+    const { children, gap, vertical = false, align = "stretch" }: Props = $props();
 </script>
 
 <div
