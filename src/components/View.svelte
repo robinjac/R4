@@ -74,9 +74,3 @@
 >
     {@render children()}
 </div>
-
-<style>
-    :host {
-        display: flex;
-    }
-</style>
