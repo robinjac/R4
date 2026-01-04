@@ -13,6 +13,7 @@
 </script>
 
 <div
+    style:display="flex"
     style:gap={gap ? `var(--size-${gap})` : "0"}
     style:flex-direction={vertical ? "column" : "row"}
     style:align-items={align}
@@ -20,9 +21,3 @@
 >
     {@render children()}
 </div>
-
-<style>
-    :host {
-        display: flex;
-    }
-</style>

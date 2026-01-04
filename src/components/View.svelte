@@ -1,12 +1,29 @@
 <script lang="ts">
     import type { Snippet } from "svelte";
 
-     type Props = {
+    type Props = {
         padding?: { top?: Spacing; bottom?: Spacing; left?: Spacing; right?: Spacing } | Spacing;
         border?: { top?: boolean; bottom?: boolean; left?: boolean; right?: boolean } | boolean;
         rounded?: { top?: Spacing; bottom?: Spacing; left?: Spacing; right?: Spacing } | boolean;
         background?: Background; 
         children: Snippet;
+    };
+
+    const fromBorder = (border: Props["border"]) => {
+        if (typeof border === "boolean") {
+            return border ? "1px solid var(--color-border)" : "none";
+        }
+
+        if (typeof border === "object") {
+            return `
+                ${border.top ? "1px solid var(--color-border)" : "none"} 
+                ${border.right ? "1px solid var(--color-border)" : "none"} 
+                ${border.bottom ? "1px solid var(--color-border)" : "none"} 
+                ${border.left ? "1px solid var(--color-border)" : "none"}
+            `;
+        }
+
+        return "none";
     };
 
     const fromPadding = (padding: Props["padding"]) => {
@@ -46,13 +63,14 @@
         }
     };
 
-    const { children, padding, rounded = false, background }: Props = $props();;
+    const { children, padding, border, rounded = false, background }: Props = $props();;
 </script>
 
 <div 
+    style:border={fromBorder(border)}
     style:padding={fromPadding(padding)} 
     style:border-radius={fromRounded(rounded) ?? "0"} 
-    style:background-color={typeof background === "string" ? `var(--color-${background})` : undefined }
+    style:background-color={typeof background === "string" ? background : undefined }
 >
     {@render children()}
 </div>
