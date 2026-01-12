@@ -14,6 +14,7 @@
 
 <div
     style:display="flex"
+    style:flex-grow="1"
     style:gap={gap ? `var(--size-${gap})` : "0"}
     style:flex-direction={vertical ? "column" : "row"}
     style:align-items={vertical && align ? align : "stretch"}

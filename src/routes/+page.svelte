@@ -41,4 +41,12 @@
     <View padding="xxs" border background="green">element 2</View>
     <View padding="xxs" border background="green">element 3</View>
   </Stack>
+
+  <h4>nested stacks</h4>
+   <Stack gap="xxs">
+    <View padding="xxs" border background="green">element 1</View>
+    <Stack align="center">
+        <View padding="xxs" border background="green">element 2</View>
+    </Stack>
+  </Stack>
 </Stack>
