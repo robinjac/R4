@@ -28,6 +28,9 @@ body {
   --size-l: var(--space-5);
   --size-xl: var(--space-6);
   --size-xxl: var(--space-7);
+
+  --border-color: #ddd;
+  --border-width: 1px;
 }
 
 /* Tablet overrides */

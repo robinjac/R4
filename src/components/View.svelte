@@ -11,15 +11,15 @@
 
     const fromBorder = (border: Props["border"]) => {
         if (typeof border === "boolean") {
-            return border ? "1px solid var(--color-border)" : "none";
+            return border ? "1px solid var(--border-color)" : "none";
         }
 
         if (typeof border === "object") {
             return `
-                ${border.top ? "1px solid var(--color-border)" : "none"} 
-                ${border.right ? "1px solid var(--color-border)" : "none"} 
-                ${border.bottom ? "1px solid var(--color-border)" : "none"} 
-                ${border.left ? "1px solid var(--color-border)" : "none"}
+                ${border.top ? "1px solid var(--border-color)" : "none"} 
+                ${border.right ? "1px solid var(--border-color)" : "none"} 
+                ${border.bottom ? "1px solid var(--border-color)" : "none"} 
+                ${border.left ? "1px solid var(--border-color)" : "none"}
             `;
         }
 
@@ -49,7 +49,7 @@
         }
 
         if(rounded === true) {
-            return "var(--radius-m)";
+            return "var(--radius-s)";
         }
 
         if (typeof rounded === "object") {
