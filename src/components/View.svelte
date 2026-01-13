@@ -2,11 +2,13 @@
     import type { Snippet } from "svelte";
 
     type Props = {
+        height?: number;
+        width?: number;
         padding?: { top?: Spacing; bottom?: Spacing; left?: Spacing; right?: Spacing } | Spacing;
         border?: { top?: boolean; bottom?: boolean; left?: boolean; right?: boolean } | boolean;
         rounded?: { top?: Spacing; bottom?: Spacing; left?: Spacing; right?: Spacing } | boolean;
         background?: Background; 
-        children: Snippet;
+        children?: Snippet;
     };
 
     const fromBorder = (border: Props["border"]) => {
@@ -63,14 +65,25 @@
         }
     };
 
-    const { children, padding, border, rounded = false, background }: Props = $props();;
+    const { 
+        children, 
+        padding, 
+        border, 
+        rounded = false, 
+        background, 
+        width, 
+        height 
+    }: Props = $props();
+
 </script>
 
 <div 
+    style:width={width ? `${width}px` : undefined}
+    style:height={height ? `${height}px` : undefined}
     style:border={fromBorder(border)}
     style:padding={fromPadding(padding)} 
     style:border-radius={fromRounded(rounded) ?? "0"} 
     style:background-color={typeof background === "string" ? background : undefined }
 >
-    {@render children()}
+    {@render children?.()}
 </div>
