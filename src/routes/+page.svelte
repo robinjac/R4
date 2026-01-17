@@ -44,9 +44,9 @@
 
   <h4>nested stacks</h4>
    <Stack gap="xxs">
-    <View padding="xxs" border rounded background="lightgrey">element 1</View>
+    <View padding="xxs" border height="fit" rounded background="lightgrey">element 1</View>
     <Stack gap="xxs" align="end">
-        <View padding="xxs" border height={100} rounded background="lightgrey"/>
+        <View padding="xxs" border width="fill" rounded background="lightgrey"/>
         <View padding="xxs" border height={200} rounded background="lightgrey">element 3</View>
     </Stack>
   </Stack>

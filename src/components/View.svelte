@@ -2,8 +2,8 @@
     import type { Snippet } from "svelte";
 
     type Props = {
-        height?: number;
-        width?: number;
+        height?: "fit"| number;
+        width?: "fill" | number;
         padding?: { top?: Spacing; bottom?: Spacing; left?: Spacing; right?: Spacing } | Spacing;
         border?: { top?: boolean; bottom?: boolean; left?: boolean; right?: boolean } | boolean;
         rounded?: { top?: Spacing; bottom?: Spacing; left?: Spacing; right?: Spacing } | boolean;
@@ -72,14 +72,16 @@
         rounded = false, 
         background, 
         width, 
-        height 
+        height
     }: Props = $props();
 
 </script>
 
-<div 
-    style:width={width ? `${width}px` : undefined}
-    style:height={height ? `${height}px` : undefined}
+<div
+    style:display="flex"
+    style:flex-grow={width === "fill" ? 1 : 0}
+    style:width={typeof width === "number" ? `${width}px` : undefined}
+    style:height={typeof height === "number" ? `${height}px` : height === "fit" ? "fit-content" : undefined}
     style:border={fromBorder(border)}
     style:padding={fromPadding(padding)} 
     style:border-radius={fromRounded(rounded) ?? "0"} 
