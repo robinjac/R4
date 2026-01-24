@@ -5,7 +5,7 @@
     type Props = {
         gap?: Spacing;
         vertical?: boolean;
-        align?: "start" | "center" | "end"; 
+        align?: "start" | "center" | "end";
         children: Snippet;
     };
     
@@ -18,7 +18,7 @@
     style:gap={gap ? `var(--size-${gap})` : "0"}
     style:flex-direction={vertical ? "column" : "row"}
     style:align-items={vertical && align ? align : "stretch"}
-    style:justify-content={vertical ? "start" : align ?? "start"}    
+    style:justify-content={vertical ? align : align ?? "start"}    
     style:flex-wrap="wrap"
 >
     {@render children()}
