@@ -1,0 +1,13 @@
+{
+	"compilerOptions": {
+		"strict": true,
+		"isolatedModules": true,
+		"jsx": "react-jsx",
+		"jsxImportSource": "@lynx-js/react",
+		"module": "ESNext",
+		"moduleResolution": "Bundler",
+		"skipLibCheck": true,
+		"types": ["@lynx-js/types"]
+	},
+	"include": ["src/**/*.ts", "src/**/*.tsx", "lynx.config.ts"]
+}

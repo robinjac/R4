@@ -8,6 +8,10 @@ node_modules
 /.svelte-kit
 /build
 /dist
+/native/lynx/dist
+/playwright-report
+/test-results
+/blob-report
 
 # OS
 .DS_Store
