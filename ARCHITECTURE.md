@@ -126,14 +126,21 @@ repository documents and provides actual Svelte web previews plus source, Compos
 platform policy, and diagnostic inspection. `/studio/scratch/` preserves the in-memory source-analysis
 boundary with a lazy compiler worker and never executes draft source.
 
-`r4.studio.snapshot` v1 and the selection helpers ensure semantic node references cannot cross source
+`r4.studio.snapshot` v2 and the selection helpers ensure semantic node references cannot cross source
 revisions. Source transaction v1 defines atomic text edits, stale-revision rejection, and generated
 undo transactions before Canvas or AI mutation is enabled. The versioned runtime message contract
 keeps disconnected, simulated, and actual execution states explicit.
 
-The current project registry is build-time and read-only. It proves project inspection without
-introducing filesystem authority into the browser. Opening arbitrary workspace roots requires a
-future local Studio service with explicit confinement and connection state.
+Static builds use the build-time, read-only project registry. During local development, the
+`r4-studio-project-service` Vite plugin adds a versioned project protocol over Vite's existing HMR
+channel. Its filesystem authority remains in the local Node process and is confined to one
+startup-approved, canonical workspace root. It discovers and stably reads regular `.r4.svelte`
+files, rejects child symlinks and path traversal, publishes revision manifests, and reports explicit
+connection and freshness state.
+
+Arbitrary workspace source is analysis-only. Studio does not dynamically import it or extend Vite's
+filesystem allow-list. Only known, build-time repository modules have executable previews; a future
+isolated project runtime must remain a separate origin and lifecycle.
 
 See `STUDIO.md` for the complete Phase 0 boundary and deferred capabilities.
 
@@ -174,7 +181,7 @@ HTML, browser URLs, keyboard behavior, and Svelte's targeted client updates.
 - No virtual DOM added above Svelte or native backends.
 - No claim that browser device frames equal real native execution.
 - No R4 Host, native capability ABI, navigation runtime, or production native build yet.
-- No Studio project service, filesystem mutation, or execution of in-memory drafts yet.
+- No Studio filesystem mutation or execution of in-memory drafts or arbitrary workspace modules yet.
 - No complete Svelte language lowering for native targets.
 - No renderer mixing or GPU surface implementation yet; the semantic element model leaves room for
   future renderer requirements without exposing renderer brands in application code.

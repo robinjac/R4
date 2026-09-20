@@ -23,7 +23,7 @@ describe('R4 Studio contracts', () => {
 
 		expect(first).toMatchObject({
 			schema: 'r4.studio.snapshot',
-			version: 1,
+			version: 2,
 			document: { id: 'src/StudioTest.r4.svelte' }
 		});
 		expect(first.document.revision).toHaveLength(64);

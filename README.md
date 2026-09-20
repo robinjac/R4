@@ -20,6 +20,8 @@ This repository is intentionally a vertical slice, not a complete framework.
 - Source, Svelte AST, Semantic IR, platform policy, generated output, and diagnostic inspection.
 - A browser-first read-only Studio project environment with actual web previews and synchronized
   source, Composition, Semantic IR, platform policy, and diagnostics.
+- A loopback-only local project service for confined workspace discovery, revision-qualified reads,
+  external-change refresh, and explicit disconnect state during development.
 - An isolated Scratch analyzer with revision-qualified source, AST, IR, and diagnostics snapshots.
 - Clearly labeled Web, iOS, Android, macOS, and Windows browser preview modes.
 - A replaceable Lynx backend that lowers IR, generates an internal ReactLynx implementation, and
@@ -35,6 +37,7 @@ bun test
 bun run check
 bun run build
 bun run test:e2e
+bun run test:e2e:service
 bun run native:build
 bun run verify
 ```
@@ -43,6 +46,10 @@ bun run verify
 analyzer is available at `http://localhost:3000/studio/scratch/`; it analyzes in-memory source in a
 browser worker and does not execute or write the draft. `bun run workbench` opens the primitive
 Workbench at `http://localhost:3000/`.
+
+Set `R4_STUDIO_WORKSPACE_ROOT=/absolute/project/path` before `bun run dev` to approve a different
+workspace. External workspaces are analyzed but not executed. The project service is unavailable in
+static builds and when Vite is bound to a non-loopback host.
 
 `bun run native:build` writes `native/lynx/dist/main.lynx.bundle`. Load it with Lynx Explorer or an
 embedded LynxView that uses a compatible engine.

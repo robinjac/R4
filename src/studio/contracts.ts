@@ -1,5 +1,5 @@
 import type { R4Platform, SourceRange } from '../lib/compiler/index.js';
-import { analyzeStudioSource } from './analyze.js';
+import { analyzeStudioSourceWithProfile } from './analyze.js';
 import type { R4StudioDocumentRef, R4StudioNodeRef, R4StudioSnapshot } from './types.js';
 
 export const R4_STUDIO_EDIT_VERSION = 1 as const;
@@ -65,7 +65,7 @@ export async function applyStudioSourceTransaction(
 		source = `${source.slice(0, edit.start)}${edit.replacement}${source.slice(edit.end)}`;
 	}
 
-	const nextSnapshot = await analyzeStudioSource(source, snapshot.document.id);
+	const nextSnapshot = await analyzeStudioSourceWithProfile(source, snapshot.document.id, snapshot.compilerProfile);
 	return {
 		snapshot: nextSnapshot,
 		undo: {

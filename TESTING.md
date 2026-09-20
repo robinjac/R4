@@ -24,11 +24,12 @@ bun run verify
 
 This must complete all of the following:
 
-- 25+ compiler, backend, and Studio contract unit tests;
+- 30+ compiler, backend, Studio contract, and project-service unit tests;
 - Svelte and TypeScript checks with zero errors and warnings;
 - a static SvelteKit build plus package generation and `publint`;
 - a real Rspeedy Lynx bundle at `native/lynx/dist/main.lynx.bundle`;
-- 17+ Playwright project Studio, Scratch Studio, and Workbench tests in Chromium.
+- 17+ static Playwright project Studio, Scratch Studio, and Workbench tests in Chromium;
+- a separate loopback dev-server browser suite for the local project service.
 
 Rspeedy may print a non-fatal Node `MaxListenersExceededWarning`. The build is accepted only when it
 still exits successfully and reports the generated bundle.
@@ -51,6 +52,11 @@ Open `http://localhost:3000/studio/` and verify:
 6. Direct document URLs and browser back/forward restore the selected project document.
 7. Scratch and Workbench links preserve the configured static base path.
 8. The browser console has no uncaught errors.
+
+When running through `bun run dev`, also verify that the header reports `Local service connected` and
+an external source edit advances the selected revision without losing the active document. A
+workspace approved through `R4_STUDIO_WORKSPACE_ROOT` must show `Analysis-only project source` rather
+than executing that source.
 
 ## Scratch Studio browser acceptance
 

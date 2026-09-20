@@ -1,6 +1,7 @@
 import type { R4CompileResult } from '../lib/compiler/index.js';
+import type { R4StudioCompilerProfile } from './compiler-profile.js';
 
-export const R4_STUDIO_SNAPSHOT_VERSION = 1 as const;
+export const R4_STUDIO_SNAPSHOT_VERSION = 2 as const;
 
 export interface R4StudioDocumentRef {
 	id: string;
@@ -12,6 +13,7 @@ export interface R4StudioSnapshot {
 	version: typeof R4_STUDIO_SNAPSHOT_VERSION;
 	document: R4StudioDocumentRef;
 	source: string;
+	compilerProfile: R4StudioCompilerProfile;
 	compilation: R4CompileResult;
 }
 

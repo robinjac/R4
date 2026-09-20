@@ -1,14 +1,23 @@
 <script lang="ts">
 	import { base } from '$app/paths';
 	import { onMount, setContext } from 'svelte';
+	import { lowerToLynx } from '../lib/backends/lynx.js';
 	import type { R4Node, R4Platform } from '../lib/compiler/index.js';
 	import { projectPlatform, type PlatformPolicyNode } from '../lib/policy.js';
 	import CompositionTree from '../workbench/CompositionTree.svelte';
-	import type { WorkbenchExperiment } from '../workbench/types.js';
+	import { R4_STUDIO_PROJECT_COMPILER_PROFILE } from './compiler-profile.js';
+	import { createStudioProjectClient, type R4StudioProjectClient } from './project-client.js';
+	import type { R4StudioProjectConnection, R4StudioDocumentFreshness, R4StudioProjectResponse, R4StudioProjectChange } from './project-protocol.js';
 	import { createStudioNodeRef, resolveStudioNode } from './selection.js';
 	import { createStudioSnapshot } from './snapshot.js';
 	import StudioSourceView from './StudioSourceView.svelte';
-	import { studioProjectDocument, studioProjectDocuments, studioProjectGroups } from './project.js';
+	import {
+		groupStudioProjectDocuments,
+		studioProjectDocument,
+		studioProjectDocuments,
+		studioProjectDocumentsFromService,
+		type R4StudioProjectDocument
+	} from './project.js';
 	import type { R4StudioNodeRef, R4StudioSnapshot } from './types.js';
 
 	type InspectorView = 'composition' | 'source' | 'semantic' | 'platform' | 'diagnostics';
@@ -27,32 +36,48 @@
 		{ id: 'platform', label: 'Platform IR' },
 		{ id: 'diagnostics', label: 'Diagnostics' }
 	];
-	const defaultDocument = studioProjectDocuments.find((document) => document.id === 'field-operations') ?? studioProjectDocuments[0];
+	const staticDefaultDocument = studioProjectDocuments.find((document) => document.id === 'field-operations') ?? studioProjectDocuments[0];
+	const initialDocumentId = staticDefaultDocument?.id ?? '';
 
-	let selectedId = $state(defaultDocument?.id ?? '');
+	let documents = $state<R4StudioProjectDocument[]>([...studioProjectDocuments]);
+	let selectedId = $state(initialDocumentId);
+	let requestedDocumentId = $state(initialDocumentId);
 	let platform = $state<R4Platform>('web');
 	let inspectorView = $state<InspectorView>('composition');
 	let search = $state('');
 	let snapshot = $state<R4StudioSnapshot | null>(null);
 	let selectedRef = $state<R4StudioNodeRef | null>(null);
+	let connection = $state<R4StudioProjectConnection>({ status: 'static' });
+	let freshness = $state<R4StudioDocumentFreshness>('loading');
+	let projectMessage = $state('Loading the selected project source.');
+	let tombstone = $state<R4StudioProjectDocument | null>(null);
 	let hydrated = $state(false);
 	let overlayHost: HTMLDivElement;
-	let selected = $derived(studioProjectDocument(selectedId) ?? defaultDocument);
-	let ir = $derived(selected?.compilation.compiler.ir ?? null);
+	let projectClient: R4StudioProjectClient | null = null;
+	let loadRequest = 0;
+	let lastLoadKey = '';
+	let defaultDocument = $derived(documents.find((document) => document.id === 'field-operations') ?? documents[0]);
+	let selected = $derived(studioProjectDocument(selectedId, documents) ?? (tombstone?.id === selectedId ? tombstone : defaultDocument));
+	let ir = $derived(snapshot?.compilation.ir ?? null);
 	let projection = $derived(ir ? projectPlatform(ir, platform) : null);
 	let selectedNode = $derived(snapshot && selectedRef ? resolveStudioNode(snapshot, selectedRef) : null);
 	let selectedPlatformNode = $derived(selectedRef && projection ? findPlatformNode(projection.nodes, selectedRef.target.id) : null);
-	let backendDiagnostics = $derived(
-		platform === 'ios' || platform === 'android'
-			? (selected?.compilation.backends.lynx?.diagnostics ?? [])
-			: []
-	);
-	let diagnostics = $derived([...(selected?.compilation.compiler.diagnostics ?? []), ...backendDiagnostics]);
+	let backendDiagnostics = $derived.by(() => {
+		if ((platform !== 'ios' && platform !== 'android') || !ir) return [];
+		if (snapshot?.compilation.diagnostics.some((diagnostic) => diagnostic.severity === 'error')) return [];
+		return lowerToLynx(ir).diagnostics;
+	});
+	let diagnostics = $derived([...(snapshot?.compilation.diagnostics ?? []), ...backendDiagnostics]);
 	let errorCount = $derived(diagnostics.filter((diagnostic) => diagnostic.severity === 'error').length);
 	let warningCount = $derived(diagnostics.filter((diagnostic) => diagnostic.severity === 'warning').length);
+	let preview = $derived(
+		selected?.preview && (connection.status === 'static' || (connection.status === 'connected' && connection.workspace.preview === 'repository'))
+			? selected.preview
+			: null
+	);
 	let normalizedSearch = $derived(search.trim().toLowerCase());
 	let visibleGroups = $derived(
-		studioProjectGroups
+		groupStudioProjectDocuments(documents)
 			.map((group) => ({
 				...group,
 				documents: normalizedSearch
@@ -68,35 +93,111 @@
 	$effect(() => {
 		const document = selected;
 		if (!document) return;
-		let active = true;
-		snapshot = null;
-		selectedRef = null;
-		void createStudioSnapshot(document.source, document.path, document.compilation.compiler, 'r4-repository:1;primitive-modules:r4,$lib,$lib/index.js').then(
-			(nextSnapshot) => {
-				if (!active) return;
-				snapshot = nextSnapshot;
-				const firstNode = nextSnapshot.compilation.ir?.root[0];
-				if (firstNode) selectedRef = createStudioNodeRef(nextSnapshot, firstNode.id);
-			}
-		);
-		return () => {
-			active = false;
-		};
+		const mode = connection.status === 'connected' && document.serviceId ? `service:${connection.sessionId}` : 'static';
+		const key = `${mode}:${document.serviceId ?? document.id}:${document.revision ?? document.preview?.source.length ?? 0}`;
+		if (key === lastLoadKey || (freshness === 'deleted' && tombstone?.id === document.id)) return;
+		lastLoadKey = key;
+		void loadDocument(document);
 	});
 
 	onMount(() => {
 		const selectFromLocation = () => {
 			const requested = new URL(window.location.href).searchParams.get('document');
-			selectedId = (requested && studioProjectDocument(requested)?.id) || defaultDocument?.id || '';
+			requestedDocumentId = requested || defaultDocument?.id || '';
+			selectedId = studioProjectDocument(requestedDocumentId, documents)?.id || defaultDocument?.id || '';
 		};
 		selectFromLocation();
 		window.addEventListener('popstate', selectFromLocation);
+		projectClient = createStudioProjectClient({
+			onConnection(nextConnection) {
+				connection = nextConnection;
+				if (nextConnection.status === 'disconnected') {
+					freshness = 'unknown';
+					projectMessage = nextConnection.message;
+				}
+				if (nextConnection.status === 'failed') {
+					freshness = 'failed';
+					projectMessage = nextConnection.message;
+				}
+			},
+			onManifest(manifest) {
+				adoptManifest(manifest);
+			}
+		});
+		if (projectClient) void projectClient.connect().catch(() => undefined);
 		hydrated = true;
-		return () => window.removeEventListener('popstate', selectFromLocation);
+		return () => {
+			window.removeEventListener('popstate', selectFromLocation);
+			projectClient?.dispose();
+		};
 	});
 
-	function selectDocument(document: WorkbenchExperiment, updateHistory = true) {
+	async function loadDocument(document: R4StudioProjectDocument) {
+		const request = ++loadRequest;
+		freshness = snapshot ? 'refreshing' : 'loading';
+		projectMessage = freshness === 'refreshing' ? 'Refreshing the revision-qualified project snapshot.' : 'Loading the selected project source.';
+		selectedRef = null;
+		try {
+			let nextSnapshot: R4StudioSnapshot;
+			if (connection.status === 'connected' && document.serviceId && projectClient) {
+				let response = await projectClient.read(document.serviceId, document.revision);
+				if (response.type === 'stale') response = await projectClient.read(document.serviceId, response.current.revision);
+				if (response.type !== 'snapshot') throw new Error('The project source changed repeatedly while Studio read it.');
+				nextSnapshot = response.snapshot;
+			} else if (document.preview) {
+				nextSnapshot = await createStudioSnapshot(
+					document.preview.source,
+					document.path,
+					document.preview.compilation.compiler,
+					R4_STUDIO_PROJECT_COMPILER_PROFILE
+				);
+			} else {
+				throw new Error('This project document requires the local Studio service.');
+			}
+			if (request !== loadRequest) return;
+			snapshot = nextSnapshot;
+			freshness = 'current';
+			projectMessage = 'The source snapshot matches the local project service.';
+			const firstNode = nextSnapshot.compilation.ir?.root[0];
+			if (firstNode) selectedRef = createStudioNodeRef(nextSnapshot, firstNode.id);
+		} catch (error) {
+			if (request !== loadRequest) return;
+			freshness = connection.status === 'disconnected' ? 'unknown' : 'failed';
+			projectMessage = error instanceof Error ? error.message : 'The project source could not be loaded.';
+		}
+	}
+
+	function adoptManifest(manifest: Extract<R4StudioProjectResponse, { type: 'connected' }> | R4StudioProjectChange) {
+		const previous = selected;
+		const allowPreview = 'workspace' in manifest
+			? manifest.workspace.preview === 'repository'
+			: connection.status === 'connected' && connection.workspace.preview === 'repository';
+		const nextDocuments = studioProjectDocumentsFromService(manifest.documents, allowPreview);
+		const requested = studioProjectDocument(requestedDocumentId, nextDocuments);
+		const current = studioProjectDocument(selectedId, nextDocuments);
+		documents = nextDocuments;
+		if (requested) {
+			selectedId = requested.id;
+			tombstone = null;
+		} else if (current) {
+			selectedId = current.id;
+			tombstone = null;
+		} else if (previous?.serviceId) {
+			tombstone = previous;
+			freshness = 'deleted';
+			projectMessage = 'The selected project document was deleted outside Studio.';
+		} else {
+			selectedId = nextDocuments[0]?.id ?? '';
+		}
+		if (connection.status === 'connected') connection = { ...connection, sequence: manifest.sequence };
+		lastLoadKey = '';
+	}
+
+	function selectDocument(document: R4StudioProjectDocument, updateHistory = true) {
 		selectedId = document.id;
+		requestedDocumentId = document.id;
+		tombstone = null;
+		lastLoadKey = '';
 		if (!updateHistory || typeof window === 'undefined') return;
 		const url = new URL(window.location.href);
 		url.searchParams.set('document', document.id);
@@ -125,18 +226,26 @@
 		if (node.kind === 'if') return 'Conditional';
 		return 'Collection';
 	}
+
+	function connectionLabel() {
+		if (connection.status === 'connected') return 'Local service connected';
+		if (connection.status === 'connecting') return 'Connecting local service';
+		if (connection.status === 'disconnected') return 'Local service disconnected';
+		if (connection.status === 'failed') return 'Local service failed';
+		return 'Static project snapshot';
+	}
 </script>
 
 <div class="project-studio" data-hydrated={hydrated}>
 	<header class="studio-header">
 		<a class="brand" href={`${base}/studio/`} aria-label="R4 Studio home">
 			<span class="brand-mark" aria-hidden="true">R4</span>
-			<span><strong>Studio</strong><small>read-only project environment</small></span>
+			<span><strong>Studio</strong><small>local project environment</small></span>
 		</a>
 		<div class="project-identity">
 			<span>Project</span>
-			<strong>R4 framework repository</strong>
-			<small>{studioProjectDocuments.length} analyzed documents</small>
+			<strong>{connection.status === 'connected' ? connection.workspace.name : 'R4 framework repository'}</strong>
+			<small>{documents.length} analyzed documents / {connectionLabel()}</small>
 		</div>
 		<div class="platform-switcher" role="group" aria-label="Target platform">
 			{#each platforms as item}
@@ -152,7 +261,7 @@
 	<aside class="project-navigation" aria-label="Project documents">
 		<div class="navigator-heading">
 			<div><span>Project</span><strong>Application sources</strong></div>
-			<small>{String(studioProjectDocuments.length).padStart(2, '0')}</small>
+			<small>{String(documents.length).padStart(2, '0')}</small>
 		</div>
 		<label class="project-search">
 			<span>Filter project documents</span>
@@ -188,14 +297,21 @@
 				<h1>{selected?.title}</h1>
 				<p>{selected?.description}</p>
 			</div>
-			<code>{selected?.path}</code>
+			<div class="document-state" data-freshness={freshness} aria-live="polite">
+				<code>{selected?.path}</code>
+				<strong>{connectionLabel()}</strong>
+				<small>{projectMessage}</small>
+			</div>
 		</header>
 
 		<section class="runtime-section" aria-label="Application runtime">
 			<header class="runtime-toolbar">
-				<div class="runtime-state" data-mode={platform === 'web' ? 'actual' : 'simulated'}>
+				<div class="runtime-state" data-mode={platform === 'web' && preview ? 'actual' : 'simulated'}>
 					<span aria-hidden="true"></span>
-					<div><strong>{platform === 'web' ? 'Actual Svelte web runtime' : `Simulated ${platforms.find((item) => item.id === platform)?.label} policy`}</strong><small>{platform === 'web' ? 'SSR + hydration / trusted project source' : 'Browser approximation / not native execution'}</small></div>
+					<div>
+						<strong>{platform === 'web' ? (preview ? 'Actual Svelte web runtime' : 'Analysis-only project source') : `Simulated ${platforms.find((item) => item.id === platform)?.label} policy`}</strong>
+						<small>{platform === 'web' ? (preview ? 'SSR + hydration / trusted repository module' : 'Source is analyzed but never executed in the Studio origin') : 'Browser approximation / not native execution'}</small>
+					</div>
 				</div>
 				<div class="runtime-diagnostics" class:has-errors={errorCount > 0} class:has-warnings={errorCount === 0 && warningCount > 0}>
 					<strong>{errorCount}</strong><span>errors</span><strong>{warningCount}</strong><span>warnings</span>
@@ -210,12 +326,14 @@
 					<div class="runtime-canvas-frame">
 						<div class="runtime-overlays" bind:this={overlayHost}></div>
 						<div class="runtime-canvas">
-							{#if selected}
-								{#key selected.id}
-									{@const Preview = selected.component}
-									<Preview />
-								{/key}
-							{/if}
+						{#if preview}
+							{#key preview.id}
+								{@const Preview = preview.component}
+								<Preview />
+							{/key}
+						{:else}
+							<div class="analysis-only"><strong>Execution withheld</strong><span>Connect an isolated project runtime before executing this workspace source.</span></div>
+						{/if}
 						</div>
 					</div>
 				</div>
@@ -243,7 +361,7 @@
 			{#if inspectorView === 'composition'}
 				<CompositionTree {ir} selectedNodeId={selectedNode?.id} onselect={selectNode} />
 			{:else if inspectorView === 'source'}
-				<StudioSourceView source={selected?.source ?? ''} range={selectedNode?.range} label="Selected project source" />
+				<StudioSourceView source={snapshot?.source ?? ''} range={selectedNode?.range} label="Selected project source" />
 			{:else if inspectorView === 'semantic'}
 				<pre aria-label="Selected Semantic IR">{JSON.stringify(selectedNode ?? ir, null, 2)}</pre>
 			{:else if inspectorView === 'platform'}
@@ -568,12 +686,39 @@
 	}
 
 	.document-header code {
-		max-width: 45%;
+		max-width: 100%;
 		overflow: hidden;
 		color: #737a7c;
 		font: 0.56rem/1.4 var(--r4-font-mono);
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+
+	.document-state {
+		display: grid;
+		justify-items: end;
+		max-width: 45%;
+		gap: 5px;
+		text-align: right;
+	}
+
+	.document-state strong {
+		font-size: 0.65rem;
+	}
+
+	.document-state small {
+		color: #747b7d;
+		font: 0.52rem/1.35 var(--r4-font-mono);
+	}
+
+	.document-state[data-freshness='current'] strong {
+		color: #18864f;
+	}
+
+	.document-state[data-freshness='deleted'] strong,
+	.document-state[data-freshness='failed'] strong,
+	.document-state[data-freshness='stale'] strong {
+		color: #b42318;
 	}
 
 	.runtime-section {
@@ -709,6 +854,27 @@
 
 	.runtime-canvas {
 		overflow: auto;
+	}
+
+	.analysis-only {
+		display: grid;
+		min-height: 420px;
+		align-content: center;
+		justify-items: center;
+		gap: 8px;
+		padding: 30px;
+		color: #596165;
+		text-align: center;
+	}
+
+	.analysis-only strong {
+		color: #1d2326;
+		font-size: 0.85rem;
+	}
+
+	.analysis-only span {
+		max-width: 380px;
+		font: 0.63rem/1.5 var(--r4-font-mono);
 	}
 
 	.runtime-overlays {
@@ -939,8 +1105,10 @@
 			padding: 18px;
 		}
 
-		.document-header code {
+		.document-state {
+			justify-items: start;
 			max-width: 100%;
+			text-align: left;
 		}
 
 		.runtime-section {

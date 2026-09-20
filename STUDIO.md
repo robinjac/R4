@@ -113,19 +113,44 @@ The preview executes only trusted project modules discovered at build time. In-m
 is still analysis-only. Native profiles are still simulations, regardless of their viewport or token
 appearance.
 
-The first Phase 1 slice intentionally does not include a local filesystem service, arbitrary project
-roots, source mutation, or runtime-instance instrumentation. Vite HMR provides read-only external
-source updates for this repository while those boundaries are designed.
+The Phase 1 static path intentionally does not include filesystem authority, source mutation, or
+runtime-instance instrumentation.
 
-## Next phase
+## Phase 2 local project service
 
-Continue Phase 1 by introducing the local project service needed to open arbitrary R4 workspaces:
+During `vite dev`, Studio connects through Vite's existing loopback HMR channel to a versioned local
+project service. The service:
 
-1. Constrain filesystem access to an approved workspace root.
-2. Incrementally discover source files and component boundaries.
-3. Stream external file changes into revision-qualified snapshots.
-4. Serve the project's actual SvelteKit application in an isolated preview.
-5. Detect stale snapshots and project-service disconnects explicitly.
+- approves one workspace root at startup, using `R4_STUDIO_WORKSPACE_ROOT` or the Vite root;
+- canonicalizes that root and never accepts a root from the browser;
+- recursively discovers regular `.r4.svelte` files without following child symbolic links;
+- skips generated and dependency directories and enforces depth, document-count, byte, character,
+  and UTF-8 limits;
+- performs stable, confined reads and creates revision-qualified compiler snapshots on demand;
+- publishes external add, update, and removal manifests through HMR;
+- periodically reconciles the manifest so dropped filesystem events cannot leave Studio stale;
+- exposes connected, disconnected, stale, deleted, failed, and static freshness states;
+- disables itself when Vite is exposed on a non-loopback host.
 
-Do not add graphical mutation until project snapshots, conflict handling, and source preservation are
-reliable end to end.
+Static builds retain the trusted repository registry and do not contain filesystem authority. A
+workspace other than the R4 repository is analysis-only: its source is never imported, evaluated,
+injected as HTML, or rendered in the Studio origin. Known repository modules retain their actual
+Svelte preview. An isolated arbitrary-project runtime remains a separate execution boundary.
+
+Snapshots are now schema v2 and include the exact structured compiler profile used to compile them.
+That profile participates in the revision hash and allows transactions to recompile under the same
+analyzer, Svelte, IR, and primitive-module configuration.
+
+## Remaining phases
+
+Phase 3 adds the first writable path: capability-derived static-property edits, authoritative
+compare-before-write transactions, exact undo/redo, and explicit external-change conflicts.
+
+Phase 4 adds Studio-only runtime identity and Canvas selection without deriving identity from DOM
+order or primitive names. It must preserve zero, one, or many runtime instances for one source node.
+
+Phase 5 lets Inspector, Canvas, and automation share the same validated intent and transaction path,
+then hardens reconnect, audit, accessibility, and full cross-phase acceptance behavior.
+
+Actual native execution is not a numbered browser-Studio phase. It requires an R4 Host handshake and
+real target runtime; simulations remain labeled as simulations until that boundary exists.
