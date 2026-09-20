@@ -1,6 +1,14 @@
+import type { Component } from 'svelte';
 import { experiments } from '../workbench/registry.js';
 import type { WorkbenchEntryKind, WorkbenchExperiment } from '../workbench/types.js';
 import type { R4StudioProjectDocument as R4StudioServiceDocument } from './project-protocol.js';
+
+type StudioExperimentModule = { default: Component };
+
+export interface R4StudioPreview extends WorkbenchExperiment {
+	studioComponent: Component;
+	studioArtifactId: string;
+}
 
 export interface R4StudioProjectDocument {
 	id: string;
@@ -11,7 +19,7 @@ export interface R4StudioProjectDocument {
 	kind: WorkbenchEntryKind;
 	path: string;
 	revision?: string;
-	preview?: WorkbenchExperiment;
+	preview?: R4StudioPreview;
 }
 
 export interface R4StudioProjectGroup {
@@ -27,9 +35,25 @@ const groupLabels: Array<{ kind: WorkbenchEntryKind; label: string }> = [
 	{ kind: 'experiment', label: 'Research fixtures' }
 ];
 
-const repositoryByServiceId = new Map(experiments.map((experiment) => [`src/${experiment.path}`, experiment]));
+const studioComponentModules = import.meta.glob<StudioExperimentModule>('../research/**/*.r4.svelte', {
+	eager: true,
+	query: '?r4-studio-entry'
+});
+const studioArtifactModules = import.meta.glob<string>('../research/**/*.r4.svelte', {
+	eager: true,
+	query: '?r4-studio-artifact',
+	import: 'default'
+});
+const studioExperiments: R4StudioPreview[] = experiments.map((experiment) => {
+	const path = `../${experiment.path}`;
+	const studioModule = studioComponentModules[path];
+	const studioArtifactId = studioArtifactModules[path];
+	if (!studioModule || !studioArtifactId) throw new Error(`Incomplete Studio runtime artifacts for ${path}`);
+	return { ...experiment, studioComponent: studioModule.default, studioArtifactId };
+});
+const repositoryByServiceId = new Map(studioExperiments.map((experiment) => [`src/${experiment.path}`, experiment]));
 
-export const studioProjectDocuments: R4StudioProjectDocument[] = experiments.map((experiment) => ({
+export const studioProjectDocuments: R4StudioProjectDocument[] = studioExperiments.map((experiment) => ({
 	id: experiment.id,
 	serviceId: null,
 	title: experiment.title,

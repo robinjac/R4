@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import { getStudioRuntimeAttributes } from './studio-runtime.js';
 
 	interface Props {
 		children?: Snippet;
@@ -8,9 +9,10 @@
 	}
 
 	let { children, title, tone = 'info' }: Props = $props();
+	const studioRuntimeAttributes = getStudioRuntimeAttributes();
 </script>
 
-<aside data-r4-primitive="Alert" data-tone={tone} role={tone === 'danger' ? 'alert' : 'status'}>
+<aside {...studioRuntimeAttributes} data-r4-primitive="Alert" data-tone={tone} role={tone === 'danger' ? 'alert' : 'status'}>
 	{#if title}<strong>{title}</strong>{/if}
 	<div>{@render children?.()}</div>
 </aside>

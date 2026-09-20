@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { getStudioRuntimeAttributes } from './studio-runtime.js';
+
 	interface Props {
 		label: string;
 		value?: string;
@@ -15,11 +17,12 @@
 
 	let { label, value = $bindable(''), description, error, name, min, max, step, required = false, disabled = false, onchange }: Props = $props();
 	const id = $props.id();
+	const studioRuntimeAttributes = getStudioRuntimeAttributes();
 	let describedBy = $derived([description ? `${id}-description` : '', error ? `${id}-error` : ''].filter(Boolean).join(' ') || undefined);
 	function handleChange(event: Event & { currentTarget: HTMLInputElement }) { value = event.currentTarget.value; onchange?.(value); }
 </script>
 
-<label for={id} data-r4-primitive="TimeInput">
+<label {...studioRuntimeAttributes} for={id} data-r4-primitive="TimeInput">
 	<span class="label">{label}</span>
 	<input {id} {name} type="time" bind:value {min} {max} {step} {required} {disabled} aria-describedby={describedBy} aria-invalid={error ? 'true' : undefined} onchange={handleChange} />
 	{#if description}<span id={`${id}-description`} class="description">{description}</span>{/if}

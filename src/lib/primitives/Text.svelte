@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import { getStudioRuntimeAttributes } from './studio-runtime.js';
 
 	type TextRole = 'body' | 'caption' | 'label' | 'heading' | 'title' | 'code';
 
@@ -12,6 +13,7 @@
 	}
 
 	let { children, role = 'body', level, tone = 'default', align = 'start' }: Props = $props();
+	const studioRuntimeAttributes = getStudioRuntimeAttributes();
 
 	let tag = $derived(
 		level ? (`h${level}` as const) : role === 'title' ? 'h1' : role === 'heading' ? 'h2' : role === 'code' ? 'code' : role === 'body' ? 'p' : 'span'
@@ -19,6 +21,7 @@
 </script>
 
 <svelte:element
+	{...studioRuntimeAttributes}
 	this={tag}
 	data-r4-primitive="Text"
 	data-role={role}

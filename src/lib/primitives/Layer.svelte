@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import type { Alignment } from '../types.js';
+	import { getStudioRuntimeAttributes } from './studio-runtime.js';
 
 	interface Props {
 		children?: Snippet;
@@ -8,9 +9,10 @@
 	}
 
 	let { children, align = 'stretch' }: Props = $props();
+	const studioRuntimeAttributes = getStudioRuntimeAttributes();
 </script>
 
-<div data-r4-primitive="Layer" class="layer" data-align={align}>
+<div {...studioRuntimeAttributes} data-r4-primitive="Layer" class="layer" data-align={align}>
 	{@render children?.()}
 </div>
 

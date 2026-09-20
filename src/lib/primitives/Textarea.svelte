@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { getStudioRuntimeAttributes } from './studio-runtime.js';
+
 	interface Props {
 		label: string;
 		value?: string;
@@ -27,6 +29,7 @@
 		onchange
 	}: Props = $props();
 	const id = $props.id();
+	const studioRuntimeAttributes = getStudioRuntimeAttributes();
 	let describedBy = $derived([description ? `${id}-description` : '', error ? `${id}-error` : ''].filter(Boolean).join(' ') || undefined);
 
 	function handleInput(event: Event & { currentTarget: HTMLTextAreaElement }) {
@@ -35,7 +38,7 @@
 	}
 </script>
 
-<label for={id} data-r4-primitive="Textarea">
+<label {...studioRuntimeAttributes} for={id} data-r4-primitive="Textarea">
 	<span class="label">{label}{#if required}<span aria-hidden="true"> *</span>{/if}</span>
 	<textarea {id} {name} bind:value {placeholder} {rows} {required} {disabled} {readonly} aria-describedby={describedBy} aria-invalid={error ? 'true' : undefined} oninput={handleInput}></textarea>
 	{#if description}<span id={`${id}-description`} class="description">{description}</span>{/if}

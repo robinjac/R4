@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import type { Alignment, Space } from '../types.js';
+	import { getStudioRuntimeAttributes } from './studio-runtime.js';
 	import { space, styleString } from './styles.js';
 
 	interface Props {
@@ -18,6 +19,7 @@
 		gap = 'md',
 		align = 'stretch'
 	}: Props = $props();
+	const studioRuntimeAttributes = getStudioRuntimeAttributes();
 
 	let styles = $derived(
 		styleString({
@@ -30,6 +32,6 @@
 	);
 </script>
 
-<div data-r4-primitive="Grid" style={styles}>
+<div {...studioRuntimeAttributes} data-r4-primitive="Grid" style={styles}>
 	{@render children?.()}
 </div>

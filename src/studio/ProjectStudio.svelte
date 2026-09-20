@@ -28,7 +28,7 @@
 		studioProjectDocumentsFromService,
 		type R4StudioProjectDocument
 	} from './project.js';
-	import type { R4StudioNodeRef, R4StudioSnapshot } from './types.js';
+	import type { R4StudioNodeRef, R4StudioRuntimeInstanceRef, R4StudioSnapshot } from './types.js';
 
 	type InspectorView = 'composition' | 'properties' | 'source' | 'semantic' | 'platform' | 'diagnostics';
 
@@ -58,6 +58,11 @@
 	let search = $state('');
 	let snapshot = $state<R4StudioSnapshot | null>(null);
 	let selectedRef = $state<R4StudioNodeRef | null>(null);
+	let selectionOrigin = $state<'canvas' | 'composition'>('composition');
+	let canvasMode = $state<'select' | 'interact'>('select');
+	let focusedRuntimeInstance = $state<R4StudioRuntimeInstanceRef | null>(null);
+	let runtimeInstances = $state(0);
+	let runtimeTargets = $state(0);
 	let connection = $state<R4StudioProjectConnection>({ status: 'static' });
 	let freshness = $state<R4StudioDocumentFreshness>('loading');
 	let projectMessage = $state('Loading the selected project source.');
@@ -68,6 +73,7 @@
 	let tombstone = $state<R4StudioProjectDocument | null>(null);
 	let hydrated = $state(false);
 	let overlayHost: HTMLDivElement;
+	let runtimeCanvasFrame = $state<HTMLDivElement>();
 	let projectClient: R4StudioProjectClient | null = null;
 	let loadRequest = 0;
 	let lastLoadKey = '';
@@ -90,6 +96,7 @@
 			? selected.preview
 			: null
 	);
+	let canvasPreview = $derived(preview && (!snapshot || snapshot.source === preview.source) ? preview : null);
 	let editingEnabled = $derived(
 		connection.status === 'connected' &&
 		connection.workspace.capabilities.write &&
@@ -121,6 +128,13 @@
 		void loadDocument(document);
 	});
 
+	$effect(() => {
+		selectedRef;
+		focusedRuntimeInstance;
+		canvasPreview;
+		queueMicrotask(updateCanvasSelection);
+	});
+
 	onMount(() => {
 		const selectFromLocation = () => {
 			const requested = new URL(window.location.href).searchParams.get('document');
@@ -148,10 +162,19 @@
 			}
 		});
 		if (projectClient) void projectClient.connect().catch(() => undefined);
+		const canvasObserver = new MutationObserver(updateCanvasSelection);
+		if (runtimeCanvasFrame) {
+			canvasObserver.observe(runtimeCanvasFrame, { childList: true, subtree: true });
+			runtimeCanvasFrame.addEventListener('click', selectCanvasNode, true);
+			runtimeCanvasFrame.addEventListener('keydown', selectCanvasNode, true);
+		}
 		hydrated = true;
 		return () => {
 			window.removeEventListener('popstate', selectFromLocation);
 			projectClient?.dispose();
+			canvasObserver.disconnect();
+			runtimeCanvasFrame?.removeEventListener('click', selectCanvasNode, true);
+			runtimeCanvasFrame?.removeEventListener('keydown', selectCanvasNode, true);
 		};
 	});
 
@@ -160,6 +183,8 @@
 		freshness = snapshot ? 'refreshing' : 'loading';
 		projectMessage = freshness === 'refreshing' ? 'Refreshing the revision-qualified project snapshot.' : 'Loading the selected project source.';
 		selectedRef = null;
+		selectionOrigin = 'composition';
+		focusedRuntimeInstance = null;
 		try {
 			let nextSnapshot: R4StudioSnapshot;
 			if (connection.status === 'connected' && document.serviceId && projectClient) {
@@ -232,6 +257,8 @@
 		lastLoadKey = '';
 		history = invalidateStudioHistory();
 		mutationMessage = '';
+		selectionOrigin = 'composition';
+		focusedRuntimeInstance = null;
 		if (!updateHistory || typeof window === 'undefined') return;
 		const url = new URL(window.location.href);
 		url.searchParams.set('document', document.id);
@@ -241,6 +268,70 @@
 	function selectNode(node: R4Node) {
 		if (!snapshot) return;
 		selectedRef = createStudioNodeRef(snapshot, node.id);
+		selectionOrigin = 'composition';
+		focusedRuntimeInstance = null;
+	}
+
+	function selectCanvasNode(event: Event) {
+		if (canvasMode !== 'select' || !snapshot || !canvasPreview || snapshot.source !== canvasPreview.source) return;
+		if (event instanceof KeyboardEvent && event.key !== 'Enter' && event.key !== ' ') return;
+		const target = event.composedPath().find(
+			(candidate): candidate is HTMLElement =>
+				candidate instanceof HTMLElement &&
+				candidate.dataset.r4StudioArtifact === canvasPreview.studioArtifactId &&
+				Boolean(candidate.dataset.r4StudioNode)
+		);
+		if (!target?.dataset.r4StudioNode) return;
+		try {
+			event.preventDefault();
+			event.stopPropagation();
+			selectedRef = createStudioNodeRef(snapshot, target.dataset.r4StudioNode);
+			selectionOrigin = 'canvas';
+			focusedRuntimeInstance = target.dataset.r4StudioInstance
+				? { artifactId: canvasPreview.studioArtifactId, instanceId: target.dataset.r4StudioInstance }
+				: null;
+		} catch {
+			mutationMessage = 'Canvas instrumentation belongs to another source revision and was ignored.';
+		}
+	}
+
+	function updateCanvasSelection() {
+		if (!runtimeCanvasFrame) return;
+		for (const element of runtimeCanvasFrame.querySelectorAll<HTMLElement>('[data-r4-studio-selected]')) {
+			delete element.dataset.r4StudioSelected;
+			delete element.dataset.r4StudioFocused;
+		}
+		if (
+			!selectedRef ||
+			selectedRef.document.revision !== snapshot?.document.revision ||
+			!canvasPreview ||
+			snapshot.source !== canvasPreview.source
+		) {
+			runtimeInstances = 0;
+			runtimeTargets = 0;
+			return;
+		}
+
+		const instances = new Set<string>();
+		const targets = new Set<HTMLElement>();
+		const markers = [...runtimeCanvasFrame.querySelectorAll<HTMLElement>('[data-r4-studio-node]')].filter(
+			(element) =>
+				element.dataset.r4StudioArtifact === canvasPreview.studioArtifactId &&
+				element.dataset.r4StudioNode === selectedRef?.target.id
+		);
+		for (const marker of markers) {
+			const instanceId = marker.dataset.r4StudioInstance;
+			if (instanceId) instances.add(instanceId);
+			marker.dataset.r4StudioSelected = 'true';
+			if (
+				instanceId &&
+				focusedRuntimeInstance?.artifactId === canvasPreview.studioArtifactId &&
+				instanceId === focusedRuntimeInstance.instanceId
+			) marker.dataset.r4StudioFocused = 'true';
+			targets.add(marker);
+		}
+		runtimeInstances = instances.size;
+		runtimeTargets = targets.size;
 	}
 
 	async function commitProperty(intent: R4StudioSetPropertyIntent) {
@@ -316,6 +407,7 @@
 			? findStudioNodeAtOffset(applied.snapshot, Math.min(previousNode.range.start.offset + 1, applied.snapshot.source.length))
 			: applied.snapshot.compilation.ir?.root[0] ?? null;
 		selectedRef = nextNode ? createStudioNodeRef(applied.snapshot, nextNode.id) : null;
+		focusedRuntimeInstance = null;
 		if (selected?.serviceId && connection.status === 'connected') {
 			lastLoadKey = `service:${connection.sessionId}:${selected.serviceId}:${applied.snapshot.document.revision}`;
 			documents = documents.map((document) =>
@@ -331,6 +423,7 @@
 		mutationMessage = 'The edit was rejected because the source changed outside Studio. The current source was reloaded.';
 		const firstNode = current.compilation.ir?.root[0];
 		selectedRef = firstNode ? createStudioNodeRef(current, firstNode.id) : null;
+		focusedRuntimeInstance = null;
 		if (selected?.serviceId && connection.status === 'connected') {
 			lastLoadKey = `service:${connection.sessionId}:${selected.serviceId}:${current.document.revision}`;
 			documents = documents.map((document) =>
@@ -436,12 +529,20 @@
 
 		<section class="runtime-section" aria-label="Application runtime">
 			<header class="runtime-toolbar">
-				<div class="runtime-state" data-mode={platform === 'web' && preview ? 'actual' : 'simulated'}>
+				<div class="runtime-state" data-mode={platform === 'web' && canvasPreview ? 'actual' : 'simulated'}>
 					<span aria-hidden="true"></span>
 					<div>
-						<strong>{platform === 'web' ? (preview ? 'Actual Svelte web runtime' : 'Analysis-only project source') : `Simulated ${platforms.find((item) => item.id === platform)?.label} policy`}</strong>
-						<small>{platform === 'web' ? (preview ? 'SSR + hydration / trusted repository module' : 'Source is analyzed but never executed in the Studio origin') : 'Browser approximation / not native execution'}</small>
+						<strong>{platform === 'web' ? (canvasPreview ? 'Actual Svelte web runtime' : preview ? 'Preview revision synchronizing' : 'Analysis-only project source') : `Simulated ${platforms.find((item) => item.id === platform)?.label} policy`}</strong>
+						<small>{platform === 'web' ? (canvasPreview ? 'SSR + hydration / revision-matched Studio instrumentation' : preview ? 'Execution paused until source and preview revisions match' : 'Source is analyzed but never executed in the Studio origin') : 'Browser approximation / not native execution'}</small>
 					</div>
+				</div>
+				<div class="canvas-mode" role="group" aria-label="Canvas mode">
+					<button type="button" class:active={canvasMode === 'select'} aria-pressed={canvasMode === 'select'} onclick={() => (canvasMode = 'select')}>Select</button>
+					<button type="button" class:active={canvasMode === 'interact'} aria-pressed={canvasMode === 'interact'} onclick={() => (canvasMode = 'interact')}>Interact</button>
+				</div>
+				<div class="runtime-selection" aria-live="polite">
+					<span>{selectedNode ? (selectedNode.kind === 'element' ? selectedNode.primitive : selectedNode.kind === 'component' ? selectedNode.name : selectedNode.kind) : 'No selection'}</span>
+					<strong>{runtimeInstances}</strong><span>instances</span><strong>{runtimeTargets}</strong><span>targets / {selectionOrigin}</span>
 				</div>
 				<div class="runtime-diagnostics" class:has-errors={errorCount > 0} class:has-warnings={errorCount === 0 && warningCount > 0}>
 					<strong>{errorCount}</strong><span>errors</span><strong>{warningCount}</strong><span>warnings</span>
@@ -453,12 +554,12 @@
 						<span></span><span></span><span></span>
 						<small>{platform === 'web' ? 'project://web' : `project://${platform}/simulation`}</small>
 					</div>
-					<div class="runtime-canvas-frame">
+					<div class="runtime-canvas-frame" class:selecting={canvasMode === 'select'} bind:this={runtimeCanvasFrame}>
 						<div class="runtime-overlays" bind:this={overlayHost}></div>
 						<div class="runtime-canvas">
-						{#if preview}
-							{#key preview.id}
-								{@const Preview = preview.component}
+						{#if canvasPreview}
+							{#key canvasPreview.studioArtifactId}
+								{@const Preview = canvasPreview.studioComponent}
 								<Preview />
 							{/key}
 						{:else}
@@ -882,7 +983,8 @@
 
 	.runtime-state,
 	.runtime-state > div,
-	.runtime-diagnostics {
+	.runtime-diagnostics,
+	.runtime-selection {
 		display: flex;
 		align-items: center;
 	}
@@ -922,6 +1024,41 @@
 
 	.runtime-diagnostics {
 		gap: 5px;
+	}
+
+	.runtime-selection {
+		gap: 5px;
+		color: #747b7d;
+		font: 0.52rem/1 var(--r4-font-mono);
+	}
+
+	.runtime-selection strong {
+		color: #005bd7;
+	}
+
+	.canvas-mode {
+		display: flex;
+		border: 1px solid #a5a7a3;
+		background: #f7f6f1;
+	}
+
+	.canvas-mode button {
+		border: 0;
+		background: transparent;
+		padding: 5px 7px;
+		color: #62696c;
+		font: 0.52rem/1 var(--r4-font-mono);
+		text-transform: uppercase;
+		cursor: pointer;
+	}
+
+	.canvas-mode button + button {
+		border-left: 1px solid #a5a7a3;
+	}
+
+	.canvas-mode button.active {
+		background: #171b1e;
+		color: white;
 	}
 
 	.runtime-diagnostics strong {
@@ -987,6 +1124,10 @@
 		background: #fff;
 	}
 
+	.runtime-canvas-frame.selecting {
+		cursor: crosshair;
+	}
+
 	.runtime-canvas,
 	.runtime-overlays {
 		position: absolute;
@@ -995,6 +1136,16 @@
 
 	.runtime-canvas {
 		overflow: auto;
+	}
+
+	.runtime-canvas-frame :global([data-r4-primitive][data-r4-studio-selected='true']) {
+		outline: 2px dashed #1675d1;
+		outline-offset: -2px;
+	}
+
+	.runtime-canvas-frame :global([data-r4-primitive][data-r4-studio-focused='true']) {
+		outline-style: solid;
+		outline-width: 3px;
 	}
 
 	.analysis-only {

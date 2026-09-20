@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import { getContext, tick } from 'svelte';
+	import { getStudioRuntimeAttributes } from './studio-runtime.js';
 
 	interface Props {
 		children?: Snippet;
@@ -16,6 +17,7 @@
 	const id = $props.id();
 	const embedded = getContext<boolean>('r4:embedded-page') ?? false;
 	const getOverlayHost = getContext<(() => HTMLElement | undefined) | undefined>('r4:overlay-host');
+	const studioRuntimeAttributes = getStudioRuntimeAttributes();
 
 	$effect(() => {
 		if (embedded) {
@@ -56,8 +58,8 @@
 
 {#if embedded}
 	{#if open}
-		<div class="embedded-overlay" use:portal>
-			<div bind:this={embeddedSheet} class="embedded-sheet" data-r4-primitive="Sheet" role="dialog" aria-modal="true" aria-labelledby={`${id}-title`} aria-describedby={description ? `${id}-description` : undefined} tabindex="-1">
+		<div {...studioRuntimeAttributes} class="embedded-overlay" use:portal>
+			<div {...studioRuntimeAttributes} bind:this={embeddedSheet} class="embedded-sheet" data-r4-primitive="Sheet" role="dialog" aria-modal="true" aria-labelledby={`${id}-title`} aria-describedby={description ? `${id}-description` : undefined} tabindex="-1">
 				<header>
 					<div><h2 id={`${id}-title`}>{title}</h2>{#if description}<p id={`${id}-description`}>{description}</p>{/if}</div>
 					<button type="button" aria-label="Close" onclick={close}>Close</button>
@@ -67,7 +69,7 @@
 		</div>
 	{/if}
 {:else}
-	<dialog bind:this={dialog} data-r4-primitive="Sheet" aria-labelledby={`${id}-title`} aria-describedby={description ? `${id}-description` : undefined} oncancel={handleCancel}>
+	<dialog {...studioRuntimeAttributes} bind:this={dialog} data-r4-primitive="Sheet" aria-labelledby={`${id}-title`} aria-describedby={description ? `${id}-description` : undefined} oncancel={handleCancel}>
 		<header>
 			<div><h2 id={`${id}-title`}>{title}</h2>{#if description}<p id={`${id}-description`}>{description}</p>{/if}</div>
 			<button type="button" aria-label="Close" onclick={close}>Close</button>

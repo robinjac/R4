@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import type { Alignment, Axis, Distribution, Space } from '../types.js';
+	import { getStudioRuntimeAttributes } from './studio-runtime.js';
 	import { space, styleString } from './styles.js';
 
 	interface Props {
@@ -20,6 +21,7 @@
 		distribute = 'start',
 		wrap = false
 	}: Props = $props();
+	const studioRuntimeAttributes = getStudioRuntimeAttributes();
 
 	const distribution = {
 		start: 'flex-start',
@@ -44,6 +46,6 @@
 	);
 </script>
 
-<div data-r4-primitive="Stack" data-direction={direction} style={styles}>
+<div {...studioRuntimeAttributes} data-r4-primitive="Stack" data-direction={direction} style={styles}>
 	{@render children?.()}
 </div>

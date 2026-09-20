@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import { getStudioRuntimeAttributes } from './studio-runtime.js';
 
 	interface Props {
 		children?: Snippet;
@@ -10,9 +11,11 @@
 	}
 
 	let { children, label, selected = false, disabled = false, onselect }: Props = $props();
+	const studioRuntimeAttributes = getStudioRuntimeAttributes();
 </script>
 
 <button
+	{...studioRuntimeAttributes}
 	type="button"
 	data-r4-primitive="NavigationItem"
 	class:selected

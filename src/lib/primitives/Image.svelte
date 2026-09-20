@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Size } from '../types.js';
+	import { getStudioRuntimeAttributes } from './studio-runtime.js';
 	import { size, styleString } from './styles.js';
 
 	interface Props {
@@ -12,10 +13,11 @@
 	}
 
 	let { src, alt, width, height, fit = 'cover', loading = 'lazy' }: Props = $props();
+	const studioRuntimeAttributes = getStudioRuntimeAttributes();
 	let styles = $derived(styleString({ width: size(width), height: size(height), 'object-fit': fit }));
 </script>
 
-<img data-r4-primitive="Image" {src} {alt} {loading} style={styles} />
+<img {...studioRuntimeAttributes} data-r4-primitive="Image" {src} {alt} {loading} style={styles} />
 
 <style>
 	img {

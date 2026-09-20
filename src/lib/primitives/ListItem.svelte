@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import { getStudioRuntimeAttributes } from './studio-runtime.js';
 
 	interface Props {
 		children?: Snippet;
@@ -10,9 +11,10 @@
 	}
 
 	let { children, label, selected = false, disabled = false, onselect }: Props = $props();
+	const studioRuntimeAttributes = getStudioRuntimeAttributes();
 </script>
 
-<li data-r4-primitive="ListItem" class:selected>
+<li {...studioRuntimeAttributes} data-r4-primitive="ListItem" class:selected>
 	{#if onselect}
 		<button type="button" aria-label={label} aria-pressed={selected} {disabled} onclick={onselect}>
 			{@render children?.()}

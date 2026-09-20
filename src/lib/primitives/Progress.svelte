@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { getStudioRuntimeAttributes } from './studio-runtime.js';
+
 	interface Props {
 		label: string;
 		value?: number;
@@ -6,9 +8,10 @@
 	}
 
 	let { label, value, max = 100 }: Props = $props();
+	const studioRuntimeAttributes = getStudioRuntimeAttributes();
 </script>
 
-<label data-r4-primitive="Progress">
+<label {...studioRuntimeAttributes} data-r4-primitive="Progress">
 	<span>{label}</span>
 	<progress {max} value={value}></progress>
 	{#if value !== undefined}<small>{Math.round((value / max) * 100)}%</small>{/if}

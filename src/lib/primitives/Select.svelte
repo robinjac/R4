@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { SelectOption } from '../types.js';
+	import { getStudioRuntimeAttributes } from './studio-runtime.js';
 
 	interface Props {
 		label: string;
@@ -16,6 +17,7 @@
 
 	let { label, options, value = $bindable(''), placeholder, description, error, name, required = false, disabled = false, onchange }: Props = $props();
 	const id = $props.id();
+	const studioRuntimeAttributes = getStudioRuntimeAttributes();
 	let describedBy = $derived([description ? `${id}-description` : '', error ? `${id}-error` : ''].filter(Boolean).join(' ') || undefined);
 
 	function handleChange(event: Event & { currentTarget: HTMLSelectElement }) {
@@ -24,7 +26,7 @@
 	}
 </script>
 
-<label for={id} data-r4-primitive="Select">
+<label {...studioRuntimeAttributes} for={id} data-r4-primitive="Select">
 	<span class="label">{label}{#if required}<span aria-hidden="true"> *</span>{/if}</span>
 	<select {id} {name} bind:value {required} {disabled} aria-describedby={describedBy} aria-invalid={error ? 'true' : undefined} onchange={handleChange}>
 		{#if placeholder}<option value="" disabled>{placeholder}</option>{/if}

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import { getStudioRuntimeAttributes } from './studio-runtime.js';
 
 	interface Props {
 		name: string;
@@ -9,9 +10,11 @@
 	}
 
 	let { name, label, children, size = 'md' }: Props = $props();
+	const studioRuntimeAttributes = getStudioRuntimeAttributes();
 </script>
 
 <span
+	{...studioRuntimeAttributes}
 	data-r4-primitive="Icon"
 	data-icon={name}
 	data-size={size}

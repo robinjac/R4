@@ -26,7 +26,7 @@ normal Svelte compilation.
 
 ## Snapshot contract
 
-`src/studio/types.ts` defines `r4.studio.snapshot` v1. A snapshot contains:
+`src/studio/types.ts` defines `r4.studio.snapshot` v2. A snapshot contains:
 
 - the exact source analyzed;
 - a normalized logical document ID;
@@ -45,15 +45,16 @@ positions. They refer to the exact source string stored in the snapshot.
 ## Selection contract
 
 `src/studio/selection.ts` resolves semantic nodes and source ranges within an exact snapshot.
-Selection is initially template-level rather than runtime-instance-level:
+Semantic selection remains template-level, while a Canvas selection may additionally focus one
+artifact-qualified runtime instance:
 
 - a conditional branch may not currently be mounted;
 - an each-block node may correspond to multiple runtime elements;
 - an imported component remains a source composition boundary;
 - a portaled or closed overlay may have no canvas element.
 
-Future canvas instrumentation must preserve these one-to-zero, one-to-one, and one-to-many cases. It
-must not infer identity from primitive names or DOM order.
+Canvas instrumentation preserves these one-to-zero, one-to-one, and one-to-many cases. It does not
+infer identity from primitive names or DOM order.
 
 ## Source-edit contract
 
@@ -168,10 +169,31 @@ Static builds remain read-only. Portable Node filesystems do not expose an atomi
 compare-and-swap across unrelated editor processes, so a hostile write in the final check-to-rename
 gap remains a documented local-development limitation; Studio never claims to merge that race.
 
-## Remaining phases
+## Phase 4 runtime Canvas identity
 
-Phase 4 adds Studio-only runtime identity and Canvas selection without deriving identity from DOM
-order or primitive names. It must preserve zero, one, or many runtime instances for one source node.
+Trusted repository previews have a separate Studio-only compilation. The transform wraps exact
+Semantic IR source ranges in DOM-free context boundaries and emits high-resolution source maps. Each
+R4 primitive consumes the nearest boundary and places artifact, source-node, and runtime-instance
+identity on its existing semantic root. Instrumentation therefore does not add DOM parents, alter
+list content models, or disturb sibling- and direct-child layout behavior.
+
+The immutable artifact token covers the exact source and build path. Studio accepts a Canvas marker
+only when its token matches the selected trusted preview and that preview's source exactly matches the
+current revision-qualified snapshot. The resulting semantic selection still contains document ID,
+revision, and node ID; a runtime instance ID is only an optional focus within that authored node.
+
+One source node may expose no targets, one target, or multiple targets and instances. Each-block
+instances share the source node ID and receive distinct instance IDs. Imported components remain
+opaque: only the primitive roots they emit inherit the imported boundary identity. Portaled Sheet
+surfaces and backdrops retain identity in the Studio overlay host, and removing the overlay updates a
+selected node to zero mounted instances.
+
+Canvas `Select` mode captures pointer and Enter/Space activation before the preview application runs;
+`Interact` mode leaves application behavior untouched. Canvas, Composition, Source, Semantic IR, and
+Platform IR resolve the same semantic node. The instrumented preview remains normal Svelte SSR plus
+hydration and is never enabled for an arbitrary approved workspace.
+
+## Remaining phase
 
 Phase 5 lets Inspector, Canvas, and automation share the same validated intent and transaction path,
 then hardens reconnect, audit, accessibility, and full cross-phase acceptance behavior.

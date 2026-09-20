@@ -135,6 +135,19 @@ stale revisions, writes through a same-directory temporary file, and returns exa
 transactions. The versioned runtime message contract keeps disconnected, simulated, and actual
 execution states explicit.
 
+Trusted repository previews also have a Studio-only Vite compilation. Exact Semantic IR ranges gain
+DOM-free context boundaries, and primitives attach artifact, node, and instance identity to their
+existing semantic roots. A primitive consumes its nearest identity before rendering children, so
+normal authored descendants use their own boundaries while imported components remain opaque at the
+roots they emit. Artifact identity plus exact source equality prevents stale preview DOM from being
+resolved against a newer snapshot. The normal preview compilation remains untouched, and generated
+source maps preserve authored locations.
+
+Canvas selection has explicit Select and Interact modes. Select mode captures pointer or keyboard
+activation before preview behavior; Interact mode runs the application normally. Repeated templates,
+conditional absence, imported boundaries, and portaled overlays are represented as zero, one, or many
+runtime instances and targets for one revision-qualified semantic node.
+
 Static builds use the build-time, read-only project registry. During local development, the
 `r4-studio-project-service` Vite plugin adds a versioned project protocol over Vite's existing HMR
 channel. Its filesystem authority remains in the local Node process and is confined to one
@@ -146,7 +159,7 @@ Arbitrary workspace source is analysis-only. Studio does not dynamically import 
 filesystem allow-list. Only known, build-time repository modules have executable previews; a future
 isolated project runtime must remain a separate origin and lifecycle.
 
-See `STUDIO.md` for the complete Phase 0 boundary and deferred capabilities.
+See `STUDIO.md` for the complete phase contracts and deferred capabilities.
 
 ## Portable subset
 

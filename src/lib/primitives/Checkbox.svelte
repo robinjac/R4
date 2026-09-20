@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { getStudioRuntimeAttributes } from './studio-runtime.js';
+
 	interface Props {
 		label: string;
 		checked?: boolean;
@@ -12,6 +14,7 @@
 
 	let { label, checked = $bindable(false), description, error, name, required = false, disabled = false, onchange }: Props = $props();
 	const id = $props.id();
+	const studioRuntimeAttributes = getStudioRuntimeAttributes();
 	let describedBy = $derived([description ? `${id}-description` : '', error ? `${id}-error` : ''].filter(Boolean).join(' ') || undefined);
 
 	function handleChange(event: Event & { currentTarget: HTMLInputElement }) {
@@ -20,7 +23,7 @@
 	}
 </script>
 
-<label for={id} data-r4-primitive="Checkbox" class:disabled>
+<label {...studioRuntimeAttributes} for={id} data-r4-primitive="Checkbox" class:disabled>
 	<input {id} {name} type="checkbox" bind:checked {required} {disabled} aria-describedby={describedBy} aria-invalid={error ? 'true' : undefined} onchange={handleChange} />
 	<span class="copy"><span class="label">{label}</span>{#if description}<span id={`${id}-description`} class="description">{description}</span>{/if}{#if error}<span id={`${id}-error`} class="error">{error}</span>{/if}</span>
 </label>

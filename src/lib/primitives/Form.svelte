@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import { getStudioRuntimeAttributes } from './studio-runtime.js';
 
 	interface Props {
 		children?: Snippet;
@@ -8,6 +9,7 @@
 	}
 
 	let { children, label, onsubmit }: Props = $props();
+	const studioRuntimeAttributes = getStudioRuntimeAttributes();
 
 	function handleSubmit(event: SubmitEvent) {
 		event.preventDefault();
@@ -15,7 +17,7 @@
 	}
 </script>
 
-<form data-r4-primitive="Form" aria-label={label} onsubmit={handleSubmit}>
+<form {...studioRuntimeAttributes} data-r4-primitive="Form" aria-label={label} onsubmit={handleSubmit}>
 	{@render children?.()}
 </form>
 

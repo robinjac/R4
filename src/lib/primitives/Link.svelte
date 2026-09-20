@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import { getStudioRuntimeAttributes } from './studio-runtime.js';
 
 	interface Props {
 		href: string;
@@ -9,9 +10,11 @@
 	}
 
 	let { href, children, external = false, label }: Props = $props();
+	const studioRuntimeAttributes = getStudioRuntimeAttributes();
 </script>
 
 <a
+	{...studioRuntimeAttributes}
 	data-r4-primitive="Link"
 	{href}
 	aria-label={label}

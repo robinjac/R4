@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import { getStudioRuntimeAttributes } from './studio-runtime.js';
 
 	interface Props {
 		children?: Snippet;
@@ -18,9 +19,11 @@
 		type = 'button',
 		label
 	}: Props = $props();
+	const studioRuntimeAttributes = getStudioRuntimeAttributes();
 </script>
 
 <button
+	{...studioRuntimeAttributes}
 	data-r4-primitive="Button"
 	data-variant={variant}
 	{type}

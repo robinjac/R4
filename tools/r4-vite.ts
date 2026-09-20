@@ -5,9 +5,11 @@ import { lowerToLynx } from '../src/lib/backends/lynx.js';
 import { compileR4, type R4Platform } from '../src/lib/compiler/index.js';
 import { projectPlatform } from '../src/lib/policy.js';
 import type { WorkbenchHighlightedCode, WorkbenchHighlighting } from '../src/workbench/types.js';
+import { createStudioArtifactId, instrumentStudioSource } from './studio-instrumentation.js';
 
 const irVirtualPrefix = '\0r4-ir:';
 const highlightVirtualPrefix = '\0r4-highlights:';
+const studioArtifactVirtualPrefix = '\0r4-studio-artifact:';
 const highlighter = createHighlighter({ langs: ['json', 'svelte', 'tsx'], themes: ['github-dark'] });
 const platforms: R4Platform[] = ['web', 'ios', 'android', 'macos', 'windows'];
 
@@ -36,10 +38,22 @@ export function r4CompilerPlugin(): Plugin {
 	return {
 		name: 'r4-semantic-compiler',
 		enforce: 'pre',
+		transform(source, id) {
+			const [filename, query = ''] = id.split('?', 2);
+			if (!new URLSearchParams(query).has('r4-studio-entry')) return null;
+			const instrumented = instrumentStudioSource(source, filename);
+			return { code: instrumented.code, map: instrumented.map };
+		},
 		async resolveId(id, importer) {
 			const [filename, query = ''] = id.split('?', 2);
 			const parameters = new URLSearchParams(query);
-			const prefix = parameters.has('r4-ir') ? irVirtualPrefix : parameters.has('r4-highlights') ? highlightVirtualPrefix : null;
+			const prefix = parameters.has('r4-ir')
+				? irVirtualPrefix
+				: parameters.has('r4-highlights')
+					? highlightVirtualPrefix
+					: parameters.has('r4-studio-artifact')
+						? studioArtifactVirtualPrefix
+						: null;
 			if (!prefix) return null;
 			const resolved = await this.resolve(filename, importer, { skipSelf: true });
 			return `${prefix}${encodeURIComponent(resolved?.id ?? filename)}.js`;
@@ -49,12 +63,15 @@ export function r4CompilerPlugin(): Plugin {
 				? irVirtualPrefix
 				: id.startsWith(highlightVirtualPrefix)
 					? highlightVirtualPrefix
-					: null;
+					: id.startsWith(studioArtifactVirtualPrefix)
+						? studioArtifactVirtualPrefix
+						: null;
 			if (!prefix) return null;
 			const filename = decodeURIComponent(id.slice(prefix.length, -3));
 
 			this.addWatchFile(filename);
 			const source = await readFile(filename, 'utf8');
+			if (prefix === studioArtifactVirtualPrefix) return `export default ${JSON.stringify(createStudioArtifactId(source, filename))};`;
 			const compiler = compileR4(source, { filename });
 			const hasErrors = compiler.diagnostics.some((diagnostic) => diagnostic.severity === 'error');
 			const lynx = compiler.ir && !hasErrors ? lowerToLynx(compiler.ir) : null;

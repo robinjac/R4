@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { getStudioRuntimeAttributes } from './studio-runtime.js';
+
 	interface Props {
 		label: string;
 		value?: number | null;
@@ -18,6 +20,7 @@
 
 	let { label, value = $bindable(null), placeholder, description, error, name, min, max, step, unit, required = false, disabled = false, readonly = false, onchange }: Props = $props();
 	const id = $props.id();
+	const studioRuntimeAttributes = getStudioRuntimeAttributes();
 	let describedBy = $derived([description ? `${id}-description` : '', error ? `${id}-error` : ''].filter(Boolean).join(' ') || undefined);
 
 	function handleInput(event: Event & { currentTarget: HTMLInputElement }) {
@@ -26,7 +29,7 @@
 	}
 </script>
 
-<label for={id} data-r4-primitive="NumberInput">
+<label {...studioRuntimeAttributes} for={id} data-r4-primitive="NumberInput">
 	<span class="label">{label}{#if required}<span aria-hidden="true"> *</span>{/if}</span>
 	<span class="control">
 		<input {id} {name} type="number" value={value ?? ''} {placeholder} {min} {max} {step} {required} {disabled} {readonly} aria-describedby={describedBy} aria-invalid={error ? 'true' : undefined} oninput={handleInput} />

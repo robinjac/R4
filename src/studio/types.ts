@@ -27,9 +27,15 @@ export interface R4StudioNodeRef {
 
 export type R4StudioSelectionOrigin = 'source' | 'canvas' | 'composition' | 'semantic';
 
+export interface R4StudioRuntimeInstanceRef {
+	artifactId: string;
+	instanceId: string;
+}
+
 export interface R4StudioSelection {
 	ref: R4StudioNodeRef;
 	origin: R4StudioSelectionOrigin;
+	runtimeInstance?: R4StudioRuntimeInstanceRef;
 }
 
 export interface R4StudioAnalyzeRequest {

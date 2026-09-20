@@ -24,6 +24,8 @@ This repository is intentionally a vertical slice, not a complete framework.
   external-change refresh, and explicit disconnect state during development.
 - Capability-derived static-property editing with source-preserving transactions, stale-conflict
   rejection, and exact undo/redo through the same local service.
+- Source-derived Canvas selection with DOM-transparent runtime identity, zero/one/many instance
+  tracking, opaque imported boundaries, portal support, and separate Select/Interact modes.
 - An isolated Scratch analyzer with revision-qualified source, AST, IR, and diagnostics snapshots.
 - Clearly labeled Web, iOS, Android, macOS, and Windows browser preview modes.
 - A replaceable Lynx backend that lowers IR, generates an internal ReactLynx implementation, and
@@ -83,4 +85,4 @@ discovers its component, raw source, compiler artifact, and Lynx projection auto
 ```
 
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for framework boundaries and [STUDIO.md](./STUDIO.md) for the
-Studio Phase 0 contracts and next phase.
+Studio phase contracts and remaining work.

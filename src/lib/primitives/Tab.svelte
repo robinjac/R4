@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import { getStudioRuntimeAttributes } from './studio-runtime.js';
 
 	interface Props {
 		children?: Snippet;
@@ -10,6 +11,7 @@
 	}
 
 	let { children, label, selected = false, disabled = false, onselect }: Props = $props();
+	const studioRuntimeAttributes = getStudioRuntimeAttributes();
 
 	function handleKeydown(event: KeyboardEvent & { currentTarget: HTMLButtonElement }) {
 		if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
@@ -24,6 +26,7 @@
 </script>
 
 <button
+	{...studioRuntimeAttributes}
 	type="button"
 	data-r4-primitive="Tab"
 	role="tab"

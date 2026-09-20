@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import { getStudioRuntimeAttributes } from './studio-runtime.js';
 
 	interface Props {
 		children?: Snippet;
@@ -8,9 +9,10 @@
 	}
 
 	let { children, tone = 'neutral', label }: Props = $props();
+	const studioRuntimeAttributes = getStudioRuntimeAttributes();
 </script>
 
-<span data-r4-primitive="Badge" data-tone={tone} aria-label={label}>
+<span {...studioRuntimeAttributes} data-r4-primitive="Badge" data-tone={tone} aria-label={label}>
 	{@render children?.()}
 </span>
 

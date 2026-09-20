@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import type { Insets, Radius, Size, Surface } from '../types.js';
+	import { getStudioRuntimeAttributes } from './studio-runtime.js';
 	import { insets, radius, size, styleString, surface } from './styles.js';
 
 	interface Props {
@@ -28,6 +29,7 @@
 		onclick,
 		onkeydown
 	}: Props = $props();
+	const studioRuntimeAttributes = getStudioRuntimeAttributes();
 
 	let styles = $derived(
 		styleString({
@@ -44,6 +46,7 @@
 <!-- R4's compiler reports cross-platform interaction semantics for a clickable View. -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
+	{...studioRuntimeAttributes}
 	data-r4-primitive="View"
 	aria-label={label}
 	style={styles}

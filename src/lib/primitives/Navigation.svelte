@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import { getStudioRuntimeAttributes } from './studio-runtime.js';
 
 	interface Props {
 		children?: Snippet;
@@ -8,9 +9,10 @@
 	}
 
 	let { children, label = 'Primary', placement = 'inline' }: Props = $props();
+	const studioRuntimeAttributes = getStudioRuntimeAttributes();
 </script>
 
-<nav data-r4-primitive="Navigation" data-placement={placement} aria-label={label}>
+<nav {...studioRuntimeAttributes} data-r4-primitive="Navigation" data-placement={placement} aria-label={label}>
 	<div class="items">{@render children?.()}</div>
 </nav>
 

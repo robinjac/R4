@@ -24,11 +24,11 @@ bun run verify
 
 This must complete all of the following:
 
-- 40+ compiler, backend, Studio contract, Inspector, and project-service unit tests;
+- 43+ compiler, backend, Studio contract, instrumentation, Inspector, and project-service unit tests;
 - Svelte and TypeScript checks with zero errors and warnings;
 - a static SvelteKit build plus package generation and `publint`;
 - a real Rspeedy Lynx bundle at `native/lynx/dist/main.lynx.bundle`;
-- 17+ static Playwright project Studio, Scratch Studio, and Workbench tests in Chromium;
+- 22+ static Playwright project Studio, Scratch Studio, and Workbench tests in Chromium;
 - a separate loopback dev-server browser suite for the local project service.
 
 Rspeedy may print a non-fatal Node `MaxListenersExceededWarning`. The build is accepted only when it
@@ -52,6 +52,11 @@ Open `http://localhost:3000/studio/` and verify:
 6. Direct document URLs and browser back/forward restore the selected project document.
 7. Scratch and Workbench links preserve the configured static base path.
 8. The browser console has no uncaught errors.
+9. Canvas Select mode resolves the clicked authored node without activating the application; Interact
+   mode preserves normal application behavior.
+10. Repeated template instances share one source node while retaining distinct runtime instance IDs.
+11. Imported compositions remain opaque boundaries, portaled Sheets remain selectable, and closed
+    overlays report zero mounted targets without adding wrapper elements to primitive DOM.
 
 When running through `bun run dev`, also verify that the header reports `Local service connected` and
 an external source edit advances the selected revision without losing the active document. A

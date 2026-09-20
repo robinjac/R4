@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import { getStudioRuntimeAttributes } from './studio-runtime.js';
 
 	interface Props {
 		children?: Snippet;
@@ -8,9 +9,10 @@
 	}
 
 	let { children, label, dividers = true }: Props = $props();
+	const studioRuntimeAttributes = getStudioRuntimeAttributes();
 </script>
 
-<ul data-r4-primitive="List" class:dividers aria-label={label}>
+<ul {...studioRuntimeAttributes} data-r4-primitive="List" class:dividers aria-label={label}>
 	{@render children?.()}
 </ul>
 

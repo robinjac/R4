@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import { getStudioRuntimeAttributes } from './studio-runtime.js';
 
 	interface Props {
 		children?: Snippet;
@@ -9,9 +10,10 @@
 	}
 
 	let { children, author, align = 'start', status = 'complete' }: Props = $props();
+	const studioRuntimeAttributes = getStudioRuntimeAttributes();
 </script>
 
-<li data-r4-primitive="FeedItem" data-align={align} data-status={status}>
+<li {...studioRuntimeAttributes} data-r4-primitive="FeedItem" data-align={align} data-status={status}>
 	{#if author}<span class="author">{author}</span>{/if}
 	<div class="content">{@render children?.()}</div>
 </li>
