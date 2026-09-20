@@ -113,6 +113,7 @@
 			<strong>{documentId}</strong>
 		</div>
 		<nav aria-label="R4 development environments">
+			<a href={`${base}/studio/`}>Project</a>
 			<a href={`${base}/`}>Workbench</a>
 		</nav>
 	</header>

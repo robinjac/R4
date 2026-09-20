@@ -17,6 +17,7 @@
 		props: PropSummary[];
 		reads: string[];
 		writes: string[];
+		node?: R4Node;
 	}
 
 	interface BindingView {
@@ -27,7 +28,15 @@
 		writers: string[];
 	}
 
-	let { ir }: { ir: R4SemanticDocument | null } = $props();
+	let {
+		ir,
+		selectedNodeId = null,
+		onselect
+	}: {
+		ir: R4SemanticDocument | null;
+		selectedNodeId?: string | null;
+		onselect?: (node: R4Node) => void;
+	} = $props();
 	let rows = $derived(ir ? flattenNodes(ir.root) : []);
 	let bindings = $derived(ir ? bindingViews(ir, rows) : []);
 	let nodeCount = $derived(rows.filter((row) => row.kind === 'element' || row.kind === 'component').length);
@@ -46,7 +55,8 @@
 					detail: node.source,
 					props: values.map(([name, value]) => summarizeProp(name, value)),
 					reads: unique(values.flatMap(([, value]) => readsFrom(value))),
-					writes: unique(values.flatMap(([, value]) => (value.kind === 'handler' ? value.writes : [])))
+					writes: unique(values.flatMap(([, value]) => (value.kind === 'handler' ? value.writes : []))),
+					node
 				});
 				rows.push(...flattenNodes(node.children, depth + 1));
 				continue;
@@ -63,7 +73,8 @@
 					primitive: node.primitive,
 					props: values.map(([name, value]) => summarizeProp(name, value)),
 					reads: unique(values.flatMap(([, value]) => readsFrom(value))),
-					writes: unique(values.flatMap(([, value]) => (value.kind === 'handler' ? value.writes : [])))
+					writes: unique(values.flatMap(([, value]) => (value.kind === 'handler' ? value.writes : []))),
+					node
 				});
 				rows.push(...flattenNodes(node.children, depth + 1));
 				continue;
@@ -78,7 +89,8 @@
 					detail: textPreview(node.parts),
 					props: [],
 					reads: node.dependencies,
-					writes: []
+					writes: [],
+					node
 				});
 				continue;
 			}
@@ -92,7 +104,8 @@
 					detail: node.test.source,
 					props: [],
 					reads: node.test.dependencies,
-					writes: []
+					writes: [],
+					node
 				});
 				rows.push(branchRow(`${node.id}:then`, depth + 1, 'Then'));
 				rows.push(...flattenNodes(node.consequent, depth + 2));
@@ -111,7 +124,8 @@
 				detail: `${node.item}${node.index ? `, ${node.index}` : ''} in ${node.collection.source}`,
 				props: [],
 				reads: node.collection.dependencies,
-				writes: []
+				writes: [],
+				node
 			});
 			rows.push(...flattenNodes(node.children, depth + 1));
 			if (node.fallback.length > 0) {
@@ -176,6 +190,28 @@
 	}
 </script>
 
+{#snippet nodeContent(row: TreeRow)}
+	<div class="node-line">
+		<span class="node-kind">{row.kind}</span>
+		<strong>{row.label}</strong>
+		{#if row.kind !== 'branch'}<code class="node-id">#{row.id}</code>{/if}
+	</div>
+	<div class="node-detail">{row.detail}</div>
+	{#if row.props.length > 0}
+		<div class="property-list">
+			{#each row.props as property (property.name)}
+				<span class="property" data-property-kind={property.kind}><code>{property.name}</code><span>{property.kind === 'handler' ? '()' : '='}</span><em>{property.value}</em></span>
+			{/each}
+		</div>
+	{/if}
+	{#if row.reads.length > 0 || row.writes.length > 0}
+		<div class="dependency-list">
+			{#if row.reads.length > 0}<span class="dependency read">reads <code>{row.reads.join(', ')}</code></span>{/if}
+			{#if row.writes.length > 0}<span class="dependency write">writes <code>{row.writes.join(', ')}</code></span>{/if}
+		</div>
+	{/if}
+{/snippet}
+
 <section class="composition" aria-label="R4 composition">
 	{#if ir}
 		<header class="composition-summary">
@@ -220,25 +256,15 @@
 						style={`--depth: ${row.depth}`}
 						data-node-kind={row.kind}
 						data-primitive={row.primitive}
+						data-node-id={row.node?.id}
+						class:selected={selectedNodeId === row.node?.id}
 					>
-						<div class="node-line">
-							<span class="node-kind">{row.kind}</span>
-							<strong>{row.label}</strong>
-							{#if row.kind !== 'branch'}<code class="node-id">#{row.id}</code>{/if}
-						</div>
-						<div class="node-detail">{row.detail}</div>
-						{#if row.props.length > 0}
-							<div class="property-list">
-								{#each row.props as property (property.name)}
-									<span class="property" data-property-kind={property.kind}><code>{property.name}</code><span>{property.kind === 'handler' ? '()' : '='}</span><em>{property.value}</em></span>
-								{/each}
-							</div>
-						{/if}
-						{#if row.reads.length > 0 || row.writes.length > 0}
-							<div class="dependency-list">
-								{#if row.reads.length > 0}<span class="dependency read">reads <code>{row.reads.join(', ')}</code></span>{/if}
-								{#if row.writes.length > 0}<span class="dependency write">writes <code>{row.writes.join(', ')}</code></span>{/if}
-							</div>
+						{#if row.node && onselect}
+							<button type="button" class="node-content" aria-pressed={selectedNodeId === row.node.id} onclick={() => onselect?.(row.node!)}>
+								{@render nodeContent(row)}
+							</button>
+						{:else}
+							<div class="node-content">{@render nodeContent(row)}</div>
 						{/if}
 					</li>
 				{/each}
@@ -386,7 +412,37 @@
 		position: relative;
 		margin-left: calc(10px + var(--depth) * 15px);
 		border-bottom: 1px solid #333a3e;
+		padding: 0;
+	}
+
+	.node-content {
+		display: block;
+		width: 100%;
+		border: 0;
+		background: transparent;
 		padding: 9px 12px 9px 10px;
+		color: inherit;
+		text-align: left;
+	}
+
+	button.node-content {
+		cursor: pointer;
+	}
+
+	button.node-content:hover {
+		background: #30383c;
+	}
+
+	button.node-content:focus-visible {
+		position: relative;
+		z-index: 1;
+		outline: 2px solid #70b3f2;
+		outline-offset: -2px;
+	}
+
+	.composition-node.selected {
+		background: #253d4d;
+		box-shadow: inset 3px 0 #70b3f2;
 	}
 
 	.composition-node::before {
@@ -406,9 +462,12 @@
 
 	.composition-node[data-node-kind='branch'] {
 		border-bottom-style: dashed;
+		color: #8f999d;
+	}
+
+	.composition-node[data-node-kind='branch'] .node-content {
 		padding-top: 7px;
 		padding-bottom: 7px;
-		color: #8f999d;
 	}
 
 	.composition-node[data-node-kind='component'] {

@@ -28,12 +28,12 @@ This must complete all of the following:
 - Svelte and TypeScript checks with zero errors and warnings;
 - a static SvelteKit build plus package generation and `publint`;
 - a real Rspeedy Lynx bundle at `native/lynx/dist/main.lynx.bundle`;
-- Playwright Studio and Workbench tests in Chromium.
+- 17+ Playwright project Studio, Scratch Studio, and Workbench tests in Chromium.
 
 Rspeedy may print a non-fatal Node `MaxListenersExceededWarning`. The build is accepted only when it
 still exits successfully and reports the generated bundle.
 
-## Studio browser acceptance
+## Project Studio browser acceptance
 
 Start Studio:
 
@@ -43,15 +43,25 @@ bun run dev
 
 Open `http://localhost:3000/studio/` and verify:
 
-1. The title is `R4 Studio` and the browser compiler reaches `Portable subset`.
-2. The source editor contains an ordinary R4/Svelte document imported from `r4`.
-3. Diagnostics, Semantic IR, Svelte AST, and Snapshot views represent the same revision.
-4. Replacing Button with another primitive and selecting Analyze updates the Semantic IR.
-5. Invalid Svelte source remains in the editor and produces a source-located diagnostic.
-6. The Workbench link opens `/`.
-7. The browser console has no uncaught errors.
+1. The project navigator discovers applications, compositions, primitives, and research fixtures.
+2. Field Operations executes through the actual Svelte web runtime.
+3. Selecting another project document updates the runtime and every inspector view.
+4. Selecting a Composition node highlights its exact source and scopes Semantic and Platform IR.
+5. iOS, Android, macOS, and Windows are labeled simulations rather than native execution.
+6. Direct document URLs and browser back/forward restore the selected project document.
+7. Scratch and Workbench links preserve the configured static base path.
+8. The browser console has no uncaught errors.
 
-Studio analyzes drafts but does not execute or write them during Phase 0.
+## Scratch Studio browser acceptance
+
+Open `http://localhost:3000/studio/scratch/` and verify:
+
+1. The browser compiler reaches `Portable subset` for the starter source.
+2. Diagnostics, Semantic IR, Svelte AST, and Snapshot views represent the same revision.
+3. Replacing Button with another primitive and selecting Analyze updates the Semantic IR.
+4. Invalid Svelte source remains in the editor and produces a source-located diagnostic.
+
+Scratch analyzes drafts but does not execute or write them.
 
 ## Workbench browser acceptance
 

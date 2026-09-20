@@ -18,7 +18,9 @@ This repository is intentionally a vertical slice, not a complete framework.
 - State, derived-state, template dependency, mutation, effect, and targeted-update representation.
 - Browser Workbench discovery of real `src/research/**/*.r4.svelte` experiments.
 - Source, Svelte AST, Semantic IR, platform policy, generated output, and diagnostic inspection.
-- A browser-first Studio analyzer with revision-qualified source, AST, IR, and diagnostics snapshots.
+- A browser-first read-only Studio project environment with actual web previews and synchronized
+  source, Composition, Semantic IR, platform policy, and diagnostics.
+- An isolated Scratch analyzer with revision-qualified source, AST, IR, and diagnostics snapshots.
 - Clearly labeled Web, iOS, Android, macOS, and Windows browser preview modes.
 - A replaceable Lynx backend that lowers IR, generates an internal ReactLynx implementation, and
   produces a real Lynx bundle with Rspeedy.
@@ -37,9 +39,10 @@ bun run native:build
 bun run verify
 ```
 
-`bun run dev` opens the Phase 0 Studio at `http://localhost:3000/studio/`. It analyzes in-memory R4
-source in a browser worker and does not execute or write the draft. `bun run workbench` opens the
-primitive Workbench at `http://localhost:3000/`.
+`bun run dev` opens the read-only project Studio at `http://localhost:3000/studio/`. The Scratch
+analyzer is available at `http://localhost:3000/studio/scratch/`; it analyzes in-memory source in a
+browser worker and does not execute or write the draft. `bun run workbench` opens the primitive
+Workbench at `http://localhost:3000/`.
 
 `bun run native:build` writes `native/lynx/dist/main.lynx.bundle`. Load it with Lynx Explorer or an
 embedded LynxView that uses a compatible engine.

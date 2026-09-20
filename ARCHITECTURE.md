@@ -121,14 +121,19 @@ telemetry without replacing the experiment format.
 
 ### Studio
 
-`src/studio` contains private browser-development infrastructure. `/studio/` currently proves the
-source-analysis boundary with an in-memory R4/Svelte editor, lazy compiler worker, diagnostics,
-syntax outline, Semantic IR, and a revision-qualified snapshot.
+`src/studio` contains private browser-development infrastructure. `/studio/` discovers trusted
+repository documents and provides actual Svelte web previews plus source, Composition, Semantic IR,
+platform policy, and diagnostic inspection. `/studio/scratch/` preserves the in-memory source-analysis
+boundary with a lazy compiler worker and never executes draft source.
 
 `r4.studio.snapshot` v1 and the selection helpers ensure semantic node references cannot cross source
 revisions. Source transaction v1 defines atomic text edits, stale-revision rejection, and generated
 undo transactions before Canvas or AI mutation is enabled. The versioned runtime message contract
 keeps disconnected, simulated, and actual execution states explicit.
+
+The current project registry is build-time and read-only. It proves project inspection without
+introducing filesystem authority into the browser. Opening arbitrary workspace roots requires a
+future local Studio service with explicit confinement and connection state.
 
 See `STUDIO.md` for the complete Phase 0 boundary and deferred capabilities.
 

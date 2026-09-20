@@ -1,14 +1,14 @@
 import { expect, test, type Page } from '@playwright/test';
 
 async function openStudio(page: Page) {
-	await page.goto('studio/');
+	await page.goto('studio/scratch/');
 	await expect(page.locator('.studio-shell')).toHaveAttribute('data-state', 'ready');
 }
 
 test('analyzes editable R4 source into a revision-qualified snapshot', async ({ page }) => {
 	await openStudio(page);
 
-	await expect(page).toHaveTitle('R4 Studio');
+	await expect(page).toHaveTitle('R4 Studio Scratch');
 	await expect(page.getByRole('heading', { level: 1, name: 'Source' })).toBeVisible();
 	await expect(page.getByRole('status')).toContainText('Portable subset');
 	await expect(page.getByLabel('R4 source')).toHaveValue(/import \{ Button, Page, Stack, Text \} from 'r4';/);

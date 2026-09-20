@@ -17,9 +17,9 @@ R4/Svelte source
        +-- future runtime bridge -> actual or simulated target session
 ```
 
-The first Studio route is `/studio/`. It analyzes one in-memory document and exposes diagnostics,
-Svelte AST, Semantic IR, and the complete compiler snapshot. Draft source is not evaluated, written
-to disk, or rendered as a fake IR-driven canvas.
+The Phase 0 analyzer now lives at `/studio/scratch/`. It analyzes one in-memory document and exposes
+diagnostics, Svelte AST, Semantic IR, and the complete compiler snapshot. Draft source is not
+evaluated, written to disk, or rendered as a fake IR-driven canvas.
 
 The existing Workbench remains at `/` and continues to execute trusted repository specimens through
 normal Svelte compilation.
@@ -94,15 +94,38 @@ HTML. Source size is bounded, and stale worker responses cannot replace a newer 
 Filesystem access, process execution, project indexing, and native device access require a future
 local Studio service with workspace confinement and explicit permissions.
 
+## Phase 1 read-only project environment
+
+`/studio/` discovers the repository's real `.r4.svelte` documents without converting them to a
+Studio-owned format. The current project workspace provides:
+
+- grouped application, composition, primitive, and research-file discovery;
+- filterable project navigation and directly addressable document URLs;
+- real trusted Svelte execution for the Web preview;
+- explicit browser-policy simulations for iOS, Android, macOS, and Windows;
+- source, Composition, Semantic IR, Platform IR, and Diagnostics inspectors;
+- revision-qualified semantic-node selection shared by Composition, Source, Semantic IR, and
+  Platform IR;
+- links to the isolated Scratch analyzer and primitive Workbench;
+- browser history and static base-path support.
+
+The preview executes only trusted project modules discovered at build time. In-memory Scratch source
+is still analysis-only. Native profiles are still simulations, regardless of their viewport or token
+appearance.
+
+The first Phase 1 slice intentionally does not include a local filesystem service, arbitrary project
+roots, source mutation, or runtime-instance instrumentation. Vite HMR provides read-only external
+source updates for this repository while those boundaries are designed.
+
 ## Next phase
 
-Phase 1 should make Studio a read-only project environment:
+Continue Phase 1 by introducing the local project service needed to open arbitrary R4 workspaces:
 
-1. Open a normal R4 project through a local development service.
-2. Discover files and component boundaries.
-3. Link Source, Composition, and Semantic IR through revision-qualified selections.
-4. Run the real web project through SvelteKit.
-5. Keep native views clearly labeled as policy simulations until a Host connects.
+1. Constrain filesystem access to an approved workspace root.
+2. Incrementally discover source files and component boundaries.
+3. Stream external file changes into revision-qualified snapshots.
+4. Serve the project's actual SvelteKit application in an isolated preview.
+5. Detect stale snapshots and project-service disconnects explicitly.
 
 Do not add graphical mutation until project snapshots, conflict handling, and source preservation are
 reliable end to end.
