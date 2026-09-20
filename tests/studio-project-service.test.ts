@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { R4_STUDIO_PROJECT_COMPILER_PROFILE } from '../src/studio/compiler-profile.js';
+import { createStudioNodeRef, findStudioNodeAtOffset } from '../src/studio/selection.js';
 import { StudioProjectService, StudioProjectServiceError } from '../tools/studio-project-service.js';
 
 const roots: string[] = [];
@@ -28,7 +29,7 @@ describe('R4 Studio project service', () => {
 		const service = await StudioProjectService.create({ workspaceRoot: root, viteRoot: root });
 		const connected = service.connect(1);
 
-		expect(connected.workspace).toMatchObject({ preview: 'repository', capabilities: { read: true, watch: true, write: false } });
+		expect(connected.workspace).toMatchObject({ preview: 'repository', capabilities: { read: true, watch: true, write: true } });
 		expect(connected.documents.map((document) => document.id)).toEqual(['src/App.r4.svelte', 'src/nested/detail.r4.svelte']);
 		expect(connected.issues).toEqual([]);
 	});
@@ -95,6 +96,57 @@ describe('R4 Studio project service', () => {
 		const service = await StudioProjectService.create({ workspaceRoot: root, viteRoot });
 
 		expect(service.workspace.preview).toBe('none');
+	});
+
+	test('replans property edits against disk and supports exact service undo', async () => {
+		const root = await workspace();
+		await mkdir(join(root, 'src'), { recursive: true });
+		const file = join(root, 'src', 'App.r4.svelte');
+		await writeFile(file, pageSource);
+		const service = await StudioProjectService.create({ workspaceRoot: root, viteRoot: root });
+		const document = service.documents[0];
+		const read = await service.read(9, service.sessionId, document.id, document.revision);
+		if (read.type !== 'snapshot') throw new Error('Expected a project snapshot');
+		const page = findStudioNodeAtOffset(read.snapshot, pageSource.indexOf('<Page') + 1);
+		if (!page) throw new Error('Expected a Page node');
+
+		const changed = await service.setProperty(10, service.sessionId, document.id, {
+			id: 'service-title',
+			target: createStudioNodeRef(read.snapshot, page.id),
+			property: 'title',
+			value: 'Changed by Studio'
+		});
+		expect(changed).toMatchObject({ type: 'mutation', status: 'applied' });
+		if (changed.type !== 'mutation' || changed.status !== 'applied') throw new Error('Expected an applied mutation');
+		expect(await readFile(file, 'utf8')).toBe(pageSource.replace('title="Service"', 'title="Changed by Studio"'));
+
+		const restored = await service.applyTransaction(11, service.sessionId, document.id, changed.applied.undo);
+		expect(restored).toMatchObject({ type: 'mutation', status: 'applied' });
+		expect(await readFile(file, 'utf8')).toBe(pageSource);
+	});
+
+	test('rejects a property intent after an external edit without overwriting it', async () => {
+		const root = await workspace();
+		await mkdir(join(root, 'src'), { recursive: true });
+		const file = join(root, 'src', 'App.r4.svelte');
+		await writeFile(file, pageSource);
+		const service = await StudioProjectService.create({ workspaceRoot: root, viteRoot: root });
+		const document = service.documents[0];
+		const read = await service.read(12, service.sessionId, document.id, document.revision);
+		if (read.type !== 'snapshot') throw new Error('Expected a project snapshot');
+		const page = findStudioNodeAtOffset(read.snapshot, pageSource.indexOf('<Page') + 1);
+		if (!page) throw new Error('Expected a Page node');
+		const external = pageSource.replace('Current', 'External owner');
+		await writeFile(file, external);
+
+		const conflict = await service.setProperty(13, service.sessionId, document.id, {
+			id: 'stale-service-title',
+			target: createStudioNodeRef(read.snapshot, page.id),
+			property: 'title',
+			value: 'Must not win'
+		});
+		expect(conflict).toMatchObject({ type: 'conflict', expected: read.snapshot.document });
+		expect(await readFile(file, 'utf8')).toBe(external);
 	});
 });
 

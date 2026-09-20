@@ -128,8 +128,12 @@ boundary with a lazy compiler worker and never executes draft source.
 
 `r4.studio.snapshot` v2 and the selection helpers ensure semantic node references cannot cross source
 revisions. Source transaction v1 defines atomic text edits, stale-revision rejection, and generated
-undo transactions before Canvas or AI mutation is enabled. The versioned runtime message contract
-keeps disconnected, simulated, and actual execution states explicit.
+undo transactions. The Properties Inspector derives revision-local edit anchors from Svelte's public
+modern AST and advertises `set-property` only for existing static scalar attributes. The browser sends
+semantic intent; the local service replans against disk, serializes mutations per document, rejects
+stale revisions, writes through a same-directory temporary file, and returns exact inverse
+transactions. The versioned runtime message contract keeps disconnected, simulated, and actual
+execution states explicit.
 
 Static builds use the build-time, read-only project registry. During local development, the
 `r4-studio-project-service` Vite plugin adds a versioned project protocol over Vite's existing HMR
@@ -181,7 +185,8 @@ HTML, browser URLs, keyboard behavior, and Svelte's targeted client updates.
 - No virtual DOM added above Svelte or native backends.
 - No claim that browser device frames equal real native execution.
 - No R4 Host, native capability ABI, navigation runtime, or production native build yet.
-- No Studio filesystem mutation or execution of in-memory drafts or arbitrary workspace modules yet.
+- No execution of in-memory drafts or arbitrary workspace modules.
+- No structural Canvas editing, dynamic-expression replacement, or automatic conflict merging.
 - No complete Svelte language lowering for native targets.
 - No renderer mixing or GPU surface implementation yet; the semantic element model leaves room for
   future renderer requirements without exposing renderer brands in application code.

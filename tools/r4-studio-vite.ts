@@ -77,6 +77,12 @@ async function handleRequest(service: StudioProjectService, request: R4StudioPro
 			await service.rescan(true);
 			return service.connect(request.requestId);
 		}
+		if (request.type === 'set-property') {
+			return service.setProperty(request.requestId, request.sessionId, request.documentId, request.intent);
+		}
+		if (request.type === 'apply-transaction') {
+			return service.applyTransaction(request.requestId, request.sessionId, request.documentId, request.transaction);
+		}
 		throw new StudioProjectServiceError('request-failed', 'The Studio project request is invalid.');
 	} catch (error) {
 		return toStudioProjectError(requestId, error);

@@ -8,6 +8,8 @@ import {
 	type R4StudioProjectRequest,
 	type R4StudioProjectResponse
 } from './project-protocol.js';
+import type { R4StudioSourceTransaction } from './contracts.js';
+import type { R4StudioSetPropertyIntent } from './inspector.js';
 
 const REQUEST_TIMEOUT_MS = 8_000;
 const MANIFEST_POLL_MS = 1_500;
@@ -21,6 +23,8 @@ export interface R4StudioProjectClient {
 	connect(): Promise<Extract<R4StudioProjectResponse, { type: 'connected' }>>;
 	read(documentId: string, expectedRevision?: string): Promise<Extract<R4StudioProjectResponse, { type: 'snapshot' | 'stale' }>>;
 	rescan(): Promise<Extract<R4StudioProjectResponse, { type: 'connected' }>>;
+	setProperty(documentId: string, intent: R4StudioSetPropertyIntent): Promise<Extract<R4StudioProjectResponse, { type: 'mutation' | 'conflict' | 'rejected' }>>;
+	applyTransaction(documentId: string, transaction: R4StudioSourceTransaction): Promise<Extract<R4StudioProjectResponse, { type: 'mutation' | 'conflict' | 'rejected' }>>;
 	dispose(): void;
 }
 
@@ -161,6 +165,36 @@ export function createStudioProjectClient(callbacks: R4StudioProjectClientCallba
 			sequence = response.sequence;
 			workspace = response.workspace;
 			if (changed) callbacks.onManifest(response);
+			return response;
+		},
+		async setProperty(documentId, intent) {
+			if (!sessionId) throw new Error('The local Studio project service is not connected.');
+			const response = await send({
+				type: 'set-property',
+				protocolVersion: R4_STUDIO_PROJECT_PROTOCOL_VERSION,
+				requestId: ++requestId,
+				sessionId,
+				documentId,
+				intent
+			});
+			if (response.type !== 'mutation' && response.type !== 'conflict' && response.type !== 'rejected') {
+				throw new Error('The project service returned an invalid mutation response.');
+			}
+			return response;
+		},
+		async applyTransaction(documentId, transaction) {
+			if (!sessionId) throw new Error('The local Studio project service is not connected.');
+			const response = await send({
+				type: 'apply-transaction',
+				protocolVersion: R4_STUDIO_PROJECT_PROTOCOL_VERSION,
+				requestId: ++requestId,
+				sessionId,
+				documentId,
+				transaction
+			});
+			if (response.type !== 'mutation' && response.type !== 'conflict' && response.type !== 'rejected') {
+				throw new Error('The project service returned an invalid mutation response.');
+			}
 			return response;
 		},
 		dispose() {

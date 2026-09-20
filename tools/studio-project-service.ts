@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { lstat, open, readdir, realpath, stat } from 'node:fs/promises';
+import { lstat, open, readdir, realpath, rename, stat, unlink } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { analyzeStudioProjectSource, MAX_STUDIO_SOURCE_LENGTH } from '../src/studio/analyze.js';
 import { R4_STUDIO_PROJECT_COMPILER_PROFILE } from '../src/studio/compiler-profile.js';
+import { applyStudioSourceTransaction, type R4StudioSourceTransaction } from '../src/studio/contracts.js';
+import { planStudioSetProperty, type R4StudioSetPropertyIntent } from '../src/studio/inspector.js';
 import {
 	R4_STUDIO_PROJECT_PROTOCOL_VERSION,
 	type R4StudioProjectChange,
@@ -58,6 +60,7 @@ export class StudioProjectService {
 	#issues: R4StudioProjectIssue[] = [];
 	#sequence = 0;
 	#listeners = new Set<StudioProjectChangeListener>();
+	#mutationQueues = new Map<string, Promise<void>>();
 
 	private constructor(root: string, workspace: R4StudioProjectWorkspace) {
 		this.root = root;
@@ -78,7 +81,7 @@ export class StudioProjectService {
 		const service = new StudioProjectService(root, {
 			name: basename(root),
 			preview: root === viteRoot ? 'repository' : 'none',
-			capabilities: { read: true, watch: true, write: false }
+			capabilities: { read: true, watch: true, write: true }
 		});
 		await service.rescan(false);
 		return service;
@@ -144,6 +147,43 @@ export class StudioProjectService {
 		};
 	}
 
+	async setProperty(
+		requestId: number,
+		sessionId: string,
+		documentId: string,
+		intent: R4StudioSetPropertyIntent
+	): Promise<Extract<R4StudioProjectResponse, { type: 'mutation' | 'conflict' | 'rejected' }>> {
+		this.#assertSession(sessionId);
+		this.#assertDocumentId(documentId);
+		return this.#enqueueMutation(documentId, async () => {
+			const current = await this.#currentSnapshot(documentId);
+			if (intent.target.document.id !== documentId || intent.target.document.revision !== current.document.revision) {
+				return this.#conflict(requestId, intent.target.document, current);
+			}
+			const plan = planStudioSetProperty(current, intent);
+			if (plan.status === 'unchanged') return this.#unchanged(requestId);
+			if (plan.status === 'unavailable') return this.#rejected(requestId, `The property edit is unavailable: ${plan.reason}.`);
+			return this.#applyTransaction(requestId, documentId, current, plan.transaction);
+		});
+	}
+
+	async applyTransaction(
+		requestId: number,
+		sessionId: string,
+		documentId: string,
+		transaction: R4StudioSourceTransaction
+	): Promise<Extract<R4StudioProjectResponse, { type: 'mutation' | 'conflict' | 'rejected' }>> {
+		this.#assertSession(sessionId);
+		this.#assertDocumentId(documentId);
+		return this.#enqueueMutation(documentId, async () => {
+			const current = await this.#currentSnapshot(documentId);
+			if (transaction.document.id !== documentId || transaction.document.revision !== current.document.revision) {
+				return this.#conflict(requestId, transaction.document, current);
+			}
+			return this.#applyTransaction(requestId, documentId, current, transaction);
+		});
+	}
+
 	async rescan(emit = true): Promise<boolean> {
 		const { documents, issues } = await this.#discover();
 		const changed = !sameManifest(this.#documents, documents) || JSON.stringify(this.#issues) !== JSON.stringify(issues);
@@ -167,6 +207,136 @@ export class StudioProjectService {
 	subscribe(listener: StudioProjectChangeListener): () => void {
 		this.#listeners.add(listener);
 		return () => this.#listeners.delete(listener);
+	}
+
+	async #currentSnapshot(documentId: string) {
+		if (!this.#documents.has(documentId)) {
+			throw new StudioProjectServiceError('document-not-found', `The project document "${documentId}" is not available.`);
+		}
+		return analyzeStudioProjectSource(await this.#readSource(documentId), documentId);
+	}
+
+	async #applyTransaction(
+		requestId: number,
+		documentId: string,
+		current: Awaited<ReturnType<typeof analyzeStudioProjectSource>>,
+		transaction: R4StudioSourceTransaction
+	): Promise<Extract<R4StudioProjectResponse, { type: 'mutation' | 'conflict' | 'rejected' }>> {
+		let applied;
+		try {
+			applied = await applyStudioSourceTransaction(current, transaction);
+		} catch (error) {
+			return this.#rejected(requestId, error instanceof Error ? error.message : 'The source transaction was rejected.');
+		}
+
+		const latest = await this.#currentSnapshot(documentId);
+		if (latest.document.revision !== current.document.revision) return this.#conflict(requestId, current.document, latest);
+		const wrote = await this.#writeSource(documentId, current.document.revision, applied.snapshot.source);
+		if (!wrote) {
+			const conflict = await this.#currentSnapshot(documentId);
+			return this.#conflict(requestId, current.document, conflict);
+		}
+		await this.rescan(false);
+		setTimeout(() => this.#publishManifest(transaction.id), 0);
+		return {
+			type: 'mutation',
+			status: 'applied',
+			protocolVersion: R4_STUDIO_PROJECT_PROTOCOL_VERSION,
+			requestId,
+			sessionId: this.sessionId,
+			applied
+		};
+	}
+
+	async #writeSource(documentId: string, expectedRevision: string, source: string): Promise<boolean> {
+		const candidate = join(this.root, ...documentId.split('/'));
+		const state = await stat(candidate);
+		const temporary = join(dirname(candidate), `.${basename(candidate)}.r4-studio-${randomUUID()}.tmp`);
+		let created = false;
+		try {
+			const handle = await open(temporary, 'wx', state.mode);
+			created = true;
+			try {
+				await handle.writeFile(source, 'utf8');
+				await handle.sync();
+			} finally {
+				await handle.close();
+			}
+			const latestSource = await this.#readSource(documentId);
+			const latestRevision = await createStudioRevision(documentId, latestSource, R4_STUDIO_PROJECT_COMPILER_PROFILE);
+			if (latestRevision !== expectedRevision) return false;
+			await rename(temporary, candidate);
+			created = false;
+			return true;
+		} finally {
+			if (created) await unlink(temporary).catch(() => undefined);
+		}
+	}
+
+	#publishManifest(transactionId?: string) {
+		this.#sequence += 1;
+		const change: R4StudioProjectChange = {
+			type: 'manifest',
+			protocolVersion: R4_STUDIO_PROJECT_PROTOCOL_VERSION,
+			sessionId: this.sessionId,
+			sequence: this.#sequence,
+			documents: this.documents,
+			issues: this.issues,
+			cause: transactionId ? { type: 'transaction', transactionId } : undefined
+		};
+		for (const listener of this.#listeners) listener(change);
+	}
+
+	#conflict(
+		requestId: number,
+		expected: { id: string; revision: string },
+		current: Awaited<ReturnType<typeof analyzeStudioProjectSource>>
+	): Extract<R4StudioProjectResponse, { type: 'conflict' }> {
+		return {
+			type: 'conflict',
+			protocolVersion: R4_STUDIO_PROJECT_PROTOCOL_VERSION,
+			requestId,
+			sessionId: this.sessionId,
+			expected,
+			current
+		};
+	}
+
+	#rejected(requestId: number, reason: string): Extract<R4StudioProjectResponse, { type: 'rejected' }> {
+		return {
+			type: 'rejected',
+			protocolVersion: R4_STUDIO_PROJECT_PROTOCOL_VERSION,
+			requestId,
+			sessionId: this.sessionId,
+			reason
+		};
+	}
+
+	#unchanged(requestId: number): Extract<R4StudioProjectResponse, { type: 'mutation'; status: 'unchanged' }> {
+		return {
+			type: 'mutation',
+			status: 'unchanged',
+			protocolVersion: R4_STUDIO_PROJECT_PROTOCOL_VERSION,
+			requestId,
+			sessionId: this.sessionId
+		};
+	}
+
+	async #enqueueMutation<T>(documentId: string, operation: () => Promise<T>): Promise<T> {
+		const previous = this.#mutationQueues.get(documentId) ?? Promise.resolve();
+		let release!: () => void;
+		const current = new Promise<void>((resolveQueue) => {
+			release = resolveQueue;
+		});
+		const queued = previous.catch(() => undefined).then(() => current);
+		this.#mutationQueues.set(documentId, queued);
+		await previous.catch(() => undefined);
+		try {
+			return await operation();
+		} finally {
+			release();
+			if (this.#mutationQueues.get(documentId) === queued) this.#mutationQueues.delete(documentId);
+		}
 	}
 
 	#assertSession(sessionId: string) {

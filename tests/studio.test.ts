@@ -98,6 +98,23 @@ describe('R4 Studio contracts', () => {
 		);
 	});
 
+	test('allows adjacent source edits because their end-exclusive ranges do not overlap', async () => {
+		const snapshot = await analyzeStudioSource(studioSource, 'src/StudioTest.r4.svelte');
+		const applied = await applyStudioSourceTransaction(snapshot, {
+			schema: 'r4.studio.source-transaction',
+			version: R4_STUDIO_EDIT_VERSION,
+			id: 'adjacent-edits',
+			document: snapshot.document,
+			label: 'Apply adjacent edits',
+			edits: [
+				{ start: 0, end: 1, replacement: '<' },
+				{ start: 1, end: 2, replacement: 's' }
+			]
+		});
+
+		expect(applied.snapshot.source).toBe(studioSource);
+	});
+
 	test('resolves semantic selections only within their exact document revision', async () => {
 		const snapshot = await analyzeStudioSource(studioSource, 'src/StudioTest.r4.svelte');
 		const button = findStudioNodeAtOffset(snapshot, studioSource.indexOf('<Button') + 1);

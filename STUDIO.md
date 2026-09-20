@@ -137,14 +137,38 @@ workspace other than the R4 repository is analysis-only: its source is never imp
 injected as HTML, or rendered in the Studio origin. Known repository modules retain their actual
 Svelte preview. An isolated arbitrary-project runtime remains a separate execution boundary.
 
-Snapshots are now schema v2 and include the exact structured compiler profile used to compile them.
-That profile participates in the revision hash and allows transactions to recompile under the same
-analyzer, Svelte, IR, and primitive-module configuration.
+Snapshots are schema v2 and include the exact structured compiler profile used to compile them. That
+profile participates in the revision hash and lets transactions recompile under the same analyzer,
+Svelte, IR, and primitive-module configuration.
+
+## Phase 3 transactional Inspector editing
+
+The Properties Inspector exposes `set-property` only when a selected R4 primitive already has an
+unambiguous static scalar attribute. It supports quoted strings, finite numeric expressions, explicit
+booleans, and boolean shorthand. It deliberately does not insert missing properties or replace
+dynamic expressions, shorthand bindings, handlers, spreads, structured values, or imported
+component props.
+
+Edit planning reparses the exact snapshot with Svelte's public modern AST. Revision-local anchors
+identify only the authored token to replace; Studio never prints the whole AST or reformats unrelated
+source. The browser sends a semantic property intent rather than trusted text offsets. Inside a
+per-document mutation queue, the project service:
+
+1. stably reads and recompiles the current file;
+2. rejects a stale revision without rebasing it;
+3. replans the intent against the authoritative snapshot;
+4. applies and validates the source transaction in memory;
+5. rechecks the disk revision;
+6. writes a same-directory temporary file and atomically renames it;
+7. returns the new snapshot and an exact revision-qualified inverse transaction.
+
+Undo and redo use those inverse transactions through the same authoritative service path. Switching
+documents, disconnecting, or observing an unrelated external revision invalidates local history.
+Static builds remain read-only. Portable Node filesystems do not expose an atomic content
+compare-and-swap across unrelated editor processes, so a hostile write in the final check-to-rename
+gap remains a documented local-development limitation; Studio never claims to merge that race.
 
 ## Remaining phases
-
-Phase 3 adds the first writable path: capability-derived static-property edits, authoritative
-compare-before-write transactions, exact undo/redo, and explicit external-change conflicts.
 
 Phase 4 adds Studio-only runtime identity and Canvas selection without deriving identity from DOM
 order or primitive names. It must preserve zero, one, or many runtime instances for one source node.

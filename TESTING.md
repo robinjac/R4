@@ -24,7 +24,7 @@ bun run verify
 
 This must complete all of the following:
 
-- 30+ compiler, backend, Studio contract, and project-service unit tests;
+- 40+ compiler, backend, Studio contract, Inspector, and project-service unit tests;
 - Svelte and TypeScript checks with zero errors and warnings;
 - a static SvelteKit build plus package generation and `publint`;
 - a real Rspeedy Lynx bundle at `native/lynx/dist/main.lynx.bundle`;
@@ -57,6 +57,15 @@ When running through `bun run dev`, also verify that the header reports `Local s
 an external source edit advances the selected revision without losing the active document. A
 workspace approved through `R4_STUDIO_WORKSPACE_ROOT` must show `Analysis-only project source` rather
 than executing that source.
+
+For transactional editing, select a primitive with an existing static attribute and verify:
+
+1. Properties lists only source forms that Studio can preserve exactly.
+2. Applying a value updates Source, Composition, Semantic IR, Platform IR, and diagnostics to one new
+   revision.
+3. Undo restores the byte-for-byte original source and revision; Redo reapplies the edit.
+4. Editing controls are disabled in a static build or while the local service is disconnected.
+5. An external edit invalidates local history, and a stale transaction never overwrites that source.
 
 ## Scratch Studio browser acceptance
 

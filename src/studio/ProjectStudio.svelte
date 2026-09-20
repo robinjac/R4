@@ -6,10 +6,20 @@
 	import { projectPlatform, type PlatformPolicyNode } from '../lib/policy.js';
 	import CompositionTree from '../workbench/CompositionTree.svelte';
 	import { R4_STUDIO_PROJECT_COMPILER_PROFILE } from './compiler-profile.js';
+	import type { R4StudioAppliedTransaction, R4StudioSourceTransaction } from './contracts.js';
+	import {
+		completeStudioRedo,
+		completeStudioUndo,
+		createStudioHistory,
+		invalidateStudioHistory,
+		recordStudioEdit
+	} from './history.js';
+	import type { R4StudioSetPropertyIntent } from './inspector.js';
 	import { createStudioProjectClient, type R4StudioProjectClient } from './project-client.js';
 	import type { R4StudioProjectConnection, R4StudioDocumentFreshness, R4StudioProjectResponse, R4StudioProjectChange } from './project-protocol.js';
-	import { createStudioNodeRef, resolveStudioNode } from './selection.js';
+	import { createStudioNodeRef, findStudioNodeAtOffset, resolveStudioNode } from './selection.js';
 	import { createStudioSnapshot } from './snapshot.js';
+	import StudioPropertiesInspector from './StudioPropertiesInspector.svelte';
 	import StudioSourceView from './StudioSourceView.svelte';
 	import {
 		groupStudioProjectDocuments,
@@ -20,7 +30,7 @@
 	} from './project.js';
 	import type { R4StudioNodeRef, R4StudioSnapshot } from './types.js';
 
-	type InspectorView = 'composition' | 'source' | 'semantic' | 'platform' | 'diagnostics';
+	type InspectorView = 'composition' | 'properties' | 'source' | 'semantic' | 'platform' | 'diagnostics';
 
 	const platforms: Array<{ id: R4Platform; label: string }> = [
 		{ id: 'web', label: 'Web' },
@@ -31,6 +41,7 @@
 	];
 	const inspectorViews: Array<{ id: InspectorView; label: string }> = [
 		{ id: 'composition', label: 'Composition' },
+		{ id: 'properties', label: 'Properties' },
 		{ id: 'source', label: 'Source' },
 		{ id: 'semantic', label: 'Semantic IR' },
 		{ id: 'platform', label: 'Platform IR' },
@@ -50,6 +61,10 @@
 	let connection = $state<R4StudioProjectConnection>({ status: 'static' });
 	let freshness = $state<R4StudioDocumentFreshness>('loading');
 	let projectMessage = $state('Loading the selected project source.');
+	let mutationMessage = $state('');
+	let mutationPending = $state(false);
+	let pendingTransactionId = $state<string | null>(null);
+	let history = $state(createStudioHistory());
 	let tombstone = $state<R4StudioProjectDocument | null>(null);
 	let hydrated = $state(false);
 	let overlayHost: HTMLDivElement;
@@ -74,6 +89,12 @@
 		selected?.preview && (connection.status === 'static' || (connection.status === 'connected' && connection.workspace.preview === 'repository'))
 			? selected.preview
 			: null
+	);
+	let editingEnabled = $derived(
+		connection.status === 'connected' &&
+		connection.workspace.capabilities.write &&
+		freshness === 'current' &&
+		Boolean(selected?.serviceId && snapshot && selectedRef)
 	);
 	let normalizedSearch = $derived(search.trim().toLowerCase());
 	let visibleGroups = $derived(
@@ -114,10 +135,12 @@
 				if (nextConnection.status === 'disconnected') {
 					freshness = 'unknown';
 					projectMessage = nextConnection.message;
+					history = invalidateStudioHistory();
 				}
 				if (nextConnection.status === 'failed') {
 					freshness = 'failed';
 					projectMessage = nextConnection.message;
+					history = invalidateStudioHistory();
 				}
 			},
 			onManifest(manifest) {
@@ -175,6 +198,12 @@
 		const nextDocuments = studioProjectDocumentsFromService(manifest.documents, allowPreview);
 		const requested = studioProjectDocument(requestedDocumentId, nextDocuments);
 		const current = studioProjectDocument(selectedId, nextDocuments);
+		const nextSelected = requested ?? current;
+		const localTransaction = 'cause' in manifest && manifest.cause?.transactionId === pendingTransactionId;
+		if (snapshot && nextSelected?.revision && nextSelected.revision !== snapshot.document.revision && !localTransaction) {
+			history = invalidateStudioHistory();
+			mutationMessage = 'Undo history was cleared because the source changed outside Studio.';
+		}
 		documents = nextDocuments;
 		if (requested) {
 			selectedId = requested.id;
@@ -190,7 +219,10 @@
 			selectedId = nextDocuments[0]?.id ?? '';
 		}
 		if (connection.status === 'connected') connection = { ...connection, sequence: manifest.sequence };
-		lastLoadKey = '';
+		const active = studioProjectDocument(selectedId, nextDocuments);
+		lastLoadKey = snapshot && active?.revision === snapshot.document.revision
+			? `service:${connection.status === 'connected' ? connection.sessionId : ''}:${active.serviceId ?? active.id}:${active.revision}`
+			: '';
 	}
 
 	function selectDocument(document: R4StudioProjectDocument, updateHistory = true) {
@@ -198,6 +230,8 @@
 		requestedDocumentId = document.id;
 		tombstone = null;
 		lastLoadKey = '';
+		history = invalidateStudioHistory();
+		mutationMessage = '';
 		if (!updateHistory || typeof window === 'undefined') return;
 		const url = new URL(window.location.href);
 		url.searchParams.set('document', document.id);
@@ -207,6 +241,102 @@
 	function selectNode(node: R4Node) {
 		if (!snapshot) return;
 		selectedRef = createStudioNodeRef(snapshot, node.id);
+	}
+
+	async function commitProperty(intent: R4StudioSetPropertyIntent) {
+		if (!projectClient || !selected?.serviceId || mutationPending) return;
+		mutationPending = true;
+		pendingTransactionId = intent.id;
+		mutationMessage = '';
+		try {
+			const response = await projectClient.setProperty(selected.serviceId, intent);
+			if (response.type === 'mutation' && response.status === 'applied') {
+				adoptAppliedTransaction(response.applied);
+				history = recordStudioEdit(history, response.applied.undo);
+				mutationMessage = `${response.applied.undo.label.replace(/^Undo /, '')} applied.`;
+			} else if (response.type === 'mutation') {
+				mutationMessage = 'The property already has that value.';
+			} else if (response.type === 'conflict') {
+				adoptConflict(response.current);
+			} else {
+				mutationMessage = response.reason;
+			}
+		} catch (error) {
+			mutationMessage = error instanceof Error ? error.message : 'The property edit failed.';
+		} finally {
+			mutationPending = false;
+			pendingTransactionId = null;
+		}
+	}
+
+	async function undo() {
+		const transaction = history.undo.at(-1);
+		if (!transaction) return;
+		const applied = await applyHistoryTransaction(transaction);
+		if (applied) history = completeStudioUndo(history, applied.undo);
+	}
+
+	async function redo() {
+		const transaction = history.redo.at(-1);
+		if (!transaction) return;
+		const applied = await applyHistoryTransaction(transaction);
+		if (applied) history = completeStudioRedo(history, applied.undo);
+	}
+
+	async function applyHistoryTransaction(transaction: R4StudioSourceTransaction): Promise<R4StudioAppliedTransaction | null> {
+		if (!projectClient || !selected?.serviceId || mutationPending) return null;
+		mutationPending = true;
+		pendingTransactionId = transaction.id;
+		mutationMessage = '';
+		try {
+			const response = await projectClient.applyTransaction(selected.serviceId, transaction);
+			if (response.type === 'mutation' && response.status === 'applied') {
+				adoptAppliedTransaction(response.applied);
+				mutationMessage = `${transaction.label} applied.`;
+				return response.applied;
+			}
+			if (response.type === 'conflict') adoptConflict(response.current);
+			else mutationMessage = response.type === 'rejected' ? response.reason : 'The source already matches this history entry.';
+			return null;
+		} catch (error) {
+			mutationMessage = error instanceof Error ? error.message : 'The history transaction failed.';
+			return null;
+		} finally {
+			mutationPending = false;
+			pendingTransactionId = null;
+		}
+	}
+
+	function adoptAppliedTransaction(applied: R4StudioAppliedTransaction) {
+		const previousNode = selectedNode;
+		snapshot = applied.snapshot;
+		freshness = 'current';
+		projectMessage = 'The Studio transaction matches the local project source.';
+		const nextNode = previousNode
+			? findStudioNodeAtOffset(applied.snapshot, Math.min(previousNode.range.start.offset + 1, applied.snapshot.source.length))
+			: applied.snapshot.compilation.ir?.root[0] ?? null;
+		selectedRef = nextNode ? createStudioNodeRef(applied.snapshot, nextNode.id) : null;
+		if (selected?.serviceId && connection.status === 'connected') {
+			lastLoadKey = `service:${connection.sessionId}:${selected.serviceId}:${applied.snapshot.document.revision}`;
+			documents = documents.map((document) =>
+				document.serviceId === selected?.serviceId ? { ...document, revision: applied.snapshot.document.revision } : document
+			);
+		}
+	}
+
+	function adoptConflict(current: R4StudioSnapshot) {
+		snapshot = current;
+		freshness = 'current';
+		history = invalidateStudioHistory();
+		mutationMessage = 'The edit was rejected because the source changed outside Studio. The current source was reloaded.';
+		const firstNode = current.compilation.ir?.root[0];
+		selectedRef = firstNode ? createStudioNodeRef(current, firstNode.id) : null;
+		if (selected?.serviceId && connection.status === 'connected') {
+			lastLoadKey = `service:${connection.sessionId}:${selected.serviceId}:${current.document.revision}`;
+			documents = documents.map((document) =>
+				document.serviceId === selected?.serviceId ? { ...document, revision: current.document.revision } : document
+			);
+		}
 	}
 
 	function findPlatformNode(nodes: PlatformPolicyNode[], id: string): PlatformPolicyNode | null {
@@ -344,7 +474,11 @@
 	<aside class="project-inspector" aria-label="Project inspector">
 		<header class="inspector-heading">
 			<div><span>Inspector</span><strong>{nodeLabel(selectedNode)}</strong></div>
-			<code>{selectedNode ? `#${selectedNode.id}` : snapshot?.document.revision.slice(0, 10) ?? '--'}</code>
+			<div class="inspector-actions">
+				<button type="button" onclick={undo} disabled={!editingEnabled || mutationPending || history.undo.length === 0}>Undo</button>
+				<button type="button" onclick={redo} disabled={!editingEnabled || mutationPending || history.redo.length === 0}>Redo</button>
+				<code>{selectedNode ? `#${selectedNode.id}` : snapshot?.document.revision.slice(0, 10) ?? '--'}</code>
+			</div>
 		</header>
 		<div class="inspector-tabs" role="tablist" aria-label="Project inspector view">
 			{#each inspectorViews as view}
@@ -358,8 +492,15 @@
 			{/each}
 		</div>
 		<div class="inspector-content" role="tabpanel">
+			{#if mutationMessage}<div class="mutation-message" aria-live="polite">{mutationMessage}</div>{/if}
 			{#if inspectorView === 'composition'}
 				<CompositionTree {ir} selectedNodeId={selectedNode?.id} onselect={selectNode} />
+			{:else if inspectorView === 'properties'}
+				{#if snapshot && selectedRef}
+					<StudioPropertiesInspector {snapshot} {selectedRef} disabled={!editingEnabled || mutationPending} oncommit={commitProperty} />
+				{:else}
+					<div class="inspector-empty"><strong>No selection</strong><span>Select a semantic primitive before editing properties.</span></div>
+				{/if}
 			{:else if inspectorView === 'source'}
 				<StudioSourceView source={snapshot?.source ?? ''} range={selectedNode?.range} label="Selected project source" />
 			{:else if inspectorView === 'semantic'}
@@ -900,6 +1041,34 @@
 	.inspector-heading span,
 	.inspector-heading code {
 		color: #849095;
+	}
+
+	.inspector-heading > .inspector-actions {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+
+	.inspector-actions button {
+		border: 1px solid #4b555a;
+		background: #1d2326;
+		padding: 5px 7px;
+		color: #cad3d5;
+		font: 0.52rem/1 var(--r4-font-mono);
+		cursor: pointer;
+	}
+
+	.inspector-actions button:disabled {
+		cursor: not-allowed;
+		opacity: 0.4;
+	}
+
+	.mutation-message {
+		border-bottom: 1px solid #3a4145;
+		background: #182226;
+		padding: 9px 12px;
+		color: #a9c7d5;
+		font: 0.56rem/1.45 var(--r4-font-mono);
 	}
 
 	.inspector-tabs {

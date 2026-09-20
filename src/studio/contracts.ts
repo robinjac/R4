@@ -98,8 +98,8 @@ function assertTransaction(snapshot: R4StudioSnapshot, transaction: R4StudioSour
 			throw new RangeError('Source transaction offsets are outside the current document.');
 		}
 		const previous = edits[index - 1];
-		if (previous && edit.start <= previous.end) {
-			throw new Error('Source transaction edits must not overlap or share a boundary.');
+		if (previous && edit.start < previous.end) {
+			throw new Error('Source transaction edits must not overlap.');
 		}
 	}
 }

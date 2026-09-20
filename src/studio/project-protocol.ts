@@ -1,4 +1,6 @@
 import type { R4StudioDocumentRef, R4StudioSnapshot } from './types.js';
+import type { R4StudioAppliedTransaction, R4StudioSourceTransaction } from './contracts.js';
+import type { R4StudioSetPropertyIntent } from './inspector.js';
 
 export const R4_STUDIO_PROJECT_PROTOCOL_VERSION = 1 as const;
 export const R4_STUDIO_PROJECT_REQUEST_EVENT = 'r4:studio:project:request';
@@ -80,6 +82,22 @@ export type R4StudioProjectRequest =
 			protocolVersion: typeof R4_STUDIO_PROJECT_PROTOCOL_VERSION;
 			requestId: number;
 			sessionId: string;
+	  }
+	| {
+			type: 'set-property';
+			protocolVersion: typeof R4_STUDIO_PROJECT_PROTOCOL_VERSION;
+			requestId: number;
+			sessionId: string;
+			documentId: string;
+			intent: R4StudioSetPropertyIntent;
+	  }
+	| {
+			type: 'apply-transaction';
+			protocolVersion: typeof R4_STUDIO_PROJECT_PROTOCOL_VERSION;
+			requestId: number;
+			sessionId: string;
+			documentId: string;
+			transaction: R4StudioSourceTransaction;
 	  };
 
 export type R4StudioProjectResponse =
@@ -109,6 +127,36 @@ export type R4StudioProjectResponse =
 			current: R4StudioDocumentRef;
 	  }
 	| {
+			type: 'mutation';
+			status: 'applied';
+			protocolVersion: typeof R4_STUDIO_PROJECT_PROTOCOL_VERSION;
+			requestId: number;
+			sessionId: string;
+			applied: R4StudioAppliedTransaction;
+	  }
+	| {
+			type: 'mutation';
+			status: 'unchanged';
+			protocolVersion: typeof R4_STUDIO_PROJECT_PROTOCOL_VERSION;
+			requestId: number;
+			sessionId: string;
+	  }
+	| {
+			type: 'conflict';
+			protocolVersion: typeof R4_STUDIO_PROJECT_PROTOCOL_VERSION;
+			requestId: number;
+			sessionId: string;
+			expected: R4StudioDocumentRef;
+			current: R4StudioSnapshot;
+	  }
+	| {
+			type: 'rejected';
+			protocolVersion: typeof R4_STUDIO_PROJECT_PROTOCOL_VERSION;
+			requestId: number;
+			sessionId: string;
+			reason: string;
+	  }
+	| {
 			type: 'error';
 			protocolVersion: typeof R4_STUDIO_PROJECT_PROTOCOL_VERSION;
 			requestId: number;
@@ -124,4 +172,5 @@ export interface R4StudioProjectChange {
 	sequence: number;
 	documents: R4StudioProjectDocument[];
 	issues: R4StudioProjectIssue[];
+	cause?: { type: 'transaction'; transactionId: string };
 }

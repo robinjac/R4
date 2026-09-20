@@ -15,6 +15,19 @@ test('discovers, reads, and streams an approved local project without executing 
 	await page.getByRole('tab', { name: 'Source', exact: true }).click();
 	await expect(page.getByLabel('Selected project source')).toContainText('Initial service source');
 
+	await page.getByRole('tab', { name: 'Properties', exact: true }).click();
+	const title = page.getByRole('textbox', { name: /title/ });
+	await title.fill('Edited in Studio');
+	await page.getByRole('button', { name: 'Apply', exact: true }).click();
+	await expect(page.getByText('Set title applied.', { exact: true })).toBeVisible();
+	await page.getByRole('tab', { name: 'Source', exact: true }).click();
+	await expect(page.getByLabel('Selected project source')).toContainText('title="Edited in Studio"');
+
+	await page.getByRole('button', { name: 'Undo', exact: true }).click();
+	await expect(page.getByLabel('Selected project source')).toContainText('title="Service fixture"');
+	await page.getByRole('button', { name: 'Redo', exact: true }).click();
+	await expect(page.getByLabel('Selected project source')).toContainText('title="Edited in Studio"');
+
 	await writeFile(
 		fixture,
 		`<script lang="ts">\n\timport { Page, Text } from 'r4';\n</script>\n\n<Page title="Service fixture">\n\t<Text>Externally refreshed source</Text>\n</Page>\n`

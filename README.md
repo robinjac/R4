@@ -18,10 +18,12 @@ This repository is intentionally a vertical slice, not a complete framework.
 - State, derived-state, template dependency, mutation, effect, and targeted-update representation.
 - Browser Workbench discovery of real `src/research/**/*.r4.svelte` experiments.
 - Source, Svelte AST, Semantic IR, platform policy, generated output, and diagnostic inspection.
-- A browser-first read-only Studio project environment with actual web previews and synchronized
+- A browser-first Studio project environment with actual web previews and synchronized
   source, Composition, Semantic IR, platform policy, and diagnostics.
 - A loopback-only local project service for confined workspace discovery, revision-qualified reads,
   external-change refresh, and explicit disconnect state during development.
+- Capability-derived static-property editing with source-preserving transactions, stale-conflict
+  rejection, and exact undo/redo through the same local service.
 - An isolated Scratch analyzer with revision-qualified source, AST, IR, and diagnostics snapshots.
 - Clearly labeled Web, iOS, Android, macOS, and Windows browser preview modes.
 - A replaceable Lynx backend that lowers IR, generates an internal ReactLynx implementation, and
@@ -42,7 +44,7 @@ bun run native:build
 bun run verify
 ```
 
-`bun run dev` opens the read-only project Studio at `http://localhost:3000/studio/`. The Scratch
+`bun run dev` opens the project Studio at `http://localhost:3000/studio/`. The Scratch
 analyzer is available at `http://localhost:3000/studio/scratch/`; it analyzes in-memory source in a
 browser worker and does not execute or write the draft. `bun run workbench` opens the primitive
 Workbench at `http://localhost:3000/`.
@@ -50,6 +52,10 @@ Workbench at `http://localhost:3000/`.
 Set `R4_STUDIO_WORKSPACE_ROOT=/absolute/project/path` before `bun run dev` to approve a different
 workspace. External workspaces are analyzed but not executed. The project service is unavailable in
 static builds and when Vite is bound to a non-loopback host.
+
+The Properties Inspector can update existing static scalar attributes while the local service is
+connected. Dynamic expressions and structural edits remain source-only; stale edits are rejected
+rather than silently merged.
 
 `bun run native:build` writes `native/lynx/dist/main.lynx.bundle`. Load it with Lynx Explorer or an
 embedded LynxView that uses a compatible engine.
