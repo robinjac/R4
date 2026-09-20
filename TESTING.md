@@ -24,11 +24,12 @@ bun run verify
 
 This must complete all of the following:
 
-- 43+ compiler, backend, Studio contract, instrumentation, Inspector, and project-service unit tests;
+- 56+ compiler, backend, Studio contract, intent, reconnect, instrumentation, Inspector, and
+  project-service unit tests;
 - Svelte and TypeScript checks with zero errors and warnings;
 - a static SvelteKit build plus package generation and `publint`;
 - a real Rspeedy Lynx bundle at `native/lynx/dist/main.lynx.bundle`;
-- 22+ static Playwright project Studio, Scratch Studio, and Workbench tests in Chromium;
+- 27+ static Playwright project Studio, Scratch Studio, and Workbench tests in Chromium;
 - a separate loopback dev-server browser suite for the local project service.
 
 Rspeedy may print a non-fatal Node `MaxListenersExceededWarning`. The build is accepted only when it
@@ -57,6 +58,8 @@ Open `http://localhost:3000/studio/` and verify:
 10. Repeated template instances share one source node while retaining distinct runtime instance IDs.
 11. Imported compositions remain opaque boundaries, portaled Sheets remain selectable, and closed
     overlays report zero mounted targets without adding wrapper elements to primitive DOM.
+12. Arrow/Home/End move roving tab focus, tab panels are keyboard-scrollable, and noninteractive
+    Canvas primitives are reachable without changing Interact-mode focus behavior.
 
 When running through `bun run dev`, also verify that the header reports `Local service connected` and
 an external source edit advances the selected revision without losing the active document. A
@@ -71,6 +74,12 @@ For transactional editing, select a primitive with an existing static attribute 
 3. Undo restores the byte-for-byte original source and revision; Redo reapplies the edit.
 4. Editing controls are disabled in a static build or while the local service is disconnected.
 5. An external edit invalidates local history, and a stale transaction never overwrites that source.
+6. Inspector, Canvas, and trusted automation intents are canonicalized and replanned by the service;
+   duplicate IDs return one result and cannot write twice.
+7. A dropped response is looked up after a same-session reconnect without replaying the intent, undo,
+   or redo. A replacement session fails closed.
+8. Audit lists applied, unchanged, conflicted, and rejected outcomes with producer and revision
+   metadata, but never source text or property values.
 
 ## Scratch Studio browser acceptance
 

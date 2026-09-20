@@ -193,10 +193,46 @@ Canvas `Select` mode captures pointer and Enter/Space activation before the prev
 Platform IR resolve the same semantic node. The instrumented preview remains normal Svelte SSR plus
 hydration and is never enabled for an arbitrary approved workspace.
 
-## Remaining phase
+## Phase 5 shared intents and hardening
 
-Phase 5 lets Inspector, Canvas, and automation share the same validated intent and transaction path,
-then hardens reconnect, audit, accessibility, and full cross-phase acceptance behavior.
+Inspector, Canvas, and trusted in-process automation now produce the same
+`r4.studio.edit-intent` v1 contract. An intent contains a stable ID, a revision-qualified semantic
+node reference, a declared producer origin, and one bounded `set-property` operation. It never carries
+trusted source offsets. The automation adapter is a component-context capability, not a network or
+cross-origin endpoint; callers that retry a logical operation must retain its intent ID.
+
+The local service validates and canonicalizes every intent, binds the request route to its target
+document, rereads the authoritative source, and replans through the Phase 3 transaction path. Intent
+IDs are idempotency keys for the service session: an identical duplicate returns the retained result
+while that result is still the current document revision, a superseded result fails closed, and reuse
+with another canonical payload is rejected. Undo and redo accept only exact inverse transactions with
+fixed-size capability IDs issued by that same service session. The bounded registries retain compact
+fingerprints after detailed reconciliation results expire, never silently evict a visible history
+capability, and reject new history-producing writes before capacity could invalidate existing undo.
+
+Project protocol v2 treats a lost mutation response as uncertain. After a same-session reconnect, the
+client polls the exact canonical intent or history transaction's explicit pending state and never
+resends the write. A retained outcome is adopted only when its result revision is still authoritative.
+A new service session, missing result, superseded result, or mismatched payload fails closed and
+requires a fresh revision-qualified operation. Manifest rescans are serialized and coalesced, sequence
+gaps trigger reconciliation, same-revision reconnects restore current freshness, and source reads
+expose explicit retry states.
+
+Each mutation attempt appends a service-owned audit record with session sequence, timestamp, document,
+operation, producer label, revisions, outcome, and code. The latest 100 records are visible in the
+Audit Inspector. Records deliberately omit source text and property values; producer labels describe
+the trusted caller's declared origin rather than an authenticated security identity.
+
+Properties explain why editing is disabled and reject empty or non-finite numbers. Inspector and
+Scratch tabs implement roving Arrow/Home/End focus with labelled, focusable panels. Canvas Select mode
+provides roving keyboard access to noninteractive primitive roots and restores normal application
+focus behavior in Interact mode. Mutation status uses a persistent live region, and audit content wraps
+inside mobile layouts.
+
+These five browser-Studio phases are complete for the documented vertical slice. Structural editing,
+dynamic-expression replacement, raw-offset automation, external automation endpoints, arbitrary
+workspace execution, collaborative merging, and cross-process filesystem compare-and-swap remain out
+of scope.
 
 Actual native execution is not a numbered browser-Studio phase. It requires an R4 Host handshake and
 real target runtime; simulations remain labeled as simulations until that boundary exists.

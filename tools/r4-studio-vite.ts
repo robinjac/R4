@@ -47,7 +47,7 @@ export function r4StudioProjectPlugin(options: R4StudioProjectPluginOptions = {}
 			server.watcher.on('addDir', scheduleRescan);
 			server.watcher.on('unlinkDir', scheduleRescan);
 
-			server.ws.on(R4_STUDIO_PROJECT_REQUEST_EVENT, async (request: R4StudioProjectRequest, client) => {
+			server.ws.on(R4_STUDIO_PROJECT_REQUEST_EVENT, async (request: unknown, client) => {
 				const response = await handleRequest(service, request);
 				client.send(R4_STUDIO_PROJECT_RESPONSE_EVENT, response);
 			});
@@ -64,29 +64,44 @@ export function r4StudioProjectPlugin(options: R4StudioProjectPluginOptions = {}
 	};
 }
 
-async function handleRequest(service: StudioProjectService, request: R4StudioProjectRequest): Promise<R4StudioProjectResponse> {
-	const requestId = typeof request?.requestId === 'number' ? request.requestId : -1;
+async function handleRequest(service: StudioProjectService, value: unknown): Promise<R4StudioProjectResponse> {
+	const request = isRecord(value) ? value : {};
+	const requestId = Number.isSafeInteger(request.requestId) ? request.requestId as number : -1;
 	try {
-		if (request?.protocolVersion !== R4_STUDIO_PROJECT_PROTOCOL_VERSION) {
+		if (request.protocolVersion !== R4_STUDIO_PROJECT_PROTOCOL_VERSION) {
 			throw new StudioProjectServiceError('protocol-mismatch', 'The Studio project protocol version is not supported.', false);
 		}
-		if (request.type === 'connect') return service.connect(request.requestId);
-		if (request.type === 'read') return service.read(request.requestId, request.sessionId, request.documentId, request.expectedRevision);
+		if (request.type === 'connect') return service.connect(requestId);
+		if (request.type === 'read' && typeof request.sessionId === 'string' && typeof request.documentId === 'string') {
+			return service.read(requestId, request.sessionId, request.documentId, typeof request.expectedRevision === 'string' ? request.expectedRevision : undefined);
+		}
 		if (request.type === 'rescan') {
+			if (typeof request.sessionId !== 'string') throw new StudioProjectServiceError('invalid-session', 'The Studio project session is invalid.');
 			if (request.sessionId !== service.sessionId) throw new StudioProjectServiceError('invalid-session', 'The Studio project session is no longer current.');
 			await service.rescan(true);
-			return service.connect(request.requestId);
+			return service.connect(requestId);
 		}
-		if (request.type === 'set-property') {
-			return service.setProperty(request.requestId, request.sessionId, request.documentId, request.intent);
+		if (request.type === 'apply-intent' && typeof request.sessionId === 'string' && typeof request.documentId === 'string') {
+			return service.applyIntent(requestId, request.sessionId, request.documentId, request.intent);
 		}
-		if (request.type === 'apply-transaction') {
-			return service.applyTransaction(request.requestId, request.sessionId, request.documentId, request.transaction);
+		if (request.type === 'apply-history' && typeof request.sessionId === 'string' && typeof request.documentId === 'string') {
+			return service.applyHistory(requestId, request.sessionId, request.documentId, request.transaction, request.direction);
+		}
+		if (request.type === 'read-audit' && typeof request.sessionId === 'string') return service.readAudit(requestId, request.sessionId);
+		if (request.type === 'lookup-intent' && typeof request.sessionId === 'string' && typeof request.documentId === 'string') {
+			return service.lookupIntent(requestId, request.sessionId, request.documentId, request.intent);
+		}
+		if (request.type === 'lookup-history' && typeof request.sessionId === 'string' && typeof request.documentId === 'string') {
+			return service.lookupHistory(requestId, request.sessionId, request.documentId, request.transaction, request.direction);
 		}
 		throw new StudioProjectServiceError('request-failed', 'The Studio project request is invalid.');
 	} catch (error) {
 		return toStudioProjectError(requestId, error);
 	}
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function registerUnavailableHandler(server: ViteDevServer, message: string) {

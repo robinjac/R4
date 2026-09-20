@@ -1,11 +1,13 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { lstat, open, readdir, realpath, rename, stat, unlink } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { analyzeStudioProjectSource, MAX_STUDIO_SOURCE_LENGTH } from '../src/studio/analyze.js';
+import type { R4StudioAuditOrigin, R4StudioAuditRecord } from '../src/studio/audit.js';
 import { R4_STUDIO_PROJECT_COMPILER_PROFILE } from '../src/studio/compiler-profile.js';
-import { applyStudioSourceTransaction, type R4StudioSourceTransaction } from '../src/studio/contracts.js';
-import { planStudioSetProperty, type R4StudioSetPropertyIntent } from '../src/studio/inspector.js';
+import { applyStudioSourceTransaction, R4_STUDIO_EDIT_VERSION, type R4StudioSourceTransaction } from '../src/studio/contracts.js';
+import { planStudioEditIntent } from '../src/studio/inspector.js';
+import { serializeStudioEditIntent, validateStudioEditIntent, type R4StudioEditIntent } from '../src/studio/intents.js';
 import {
 	R4_STUDIO_PROJECT_PROTOCOL_VERSION,
 	type R4StudioProjectChange,
@@ -20,6 +22,10 @@ import { createStudioRevision } from '../src/studio/snapshot.js';
 const MAX_DOCUMENTS = 2_000;
 const MAX_DEPTH = 32;
 const MAX_SOURCE_BYTES = MAX_STUDIO_SOURCE_LENGTH * 4;
+const MAX_AUDIT_RECORDS = 100;
+const MAX_INTENT_RESULTS = 1_000;
+const MAX_RECONCILIATION_RESULTS = 32;
+const MAX_HISTORY_TRANSACTIONS = 200;
 const IGNORED_DIRECTORIES = new Set([
 	'.git',
 	'.svelte-kit',
@@ -52,6 +58,9 @@ export interface StudioProjectServiceOptions {
 
 export type StudioProjectChangeListener = (change: R4StudioProjectChange) => void;
 
+type MutationResponse = Extract<R4StudioProjectResponse, { type: 'mutation' | 'conflict' | 'rejected' }>;
+type AuditInput = Omit<R4StudioAuditRecord, 'sequence' | 'timestamp' | 'sessionId' | 'outcome' | 'code'>;
+
 export class StudioProjectService {
 	readonly sessionId = randomUUID();
 	readonly root: string;
@@ -61,6 +70,18 @@ export class StudioProjectService {
 	#sequence = 0;
 	#listeners = new Set<StudioProjectChangeListener>();
 	#mutationQueues = new Map<string, Promise<void>>();
+	#audit: R4StudioAuditRecord[] = [];
+	#auditSequence = 0;
+	#intentResults = new Map<string, { fingerprint: string; response?: MutationResponse }>();
+	#intentOperations = new Map<string, { fingerprint: string; response: Promise<MutationResponse> }>();
+	#historyTransactions = new Map<string, { fingerprint: string; direction: 'undo' | 'redo' }>();
+	#historyReservations = 0;
+	#historyResults = new Map<string, { fingerprint: string; direction: 'undo' | 'redo'; response: MutationResponse }>();
+	#historyOperations = new Map<string, { fingerprint: string; direction: 'undo' | 'redo'; response: Promise<MutationResponse> }>();
+	#rescanOperation: Promise<boolean> | null = null;
+	#rescanAgain = false;
+	#rescanEmit = false;
+	#manifestMutation: Promise<void> | null = null;
 
 	private constructor(root: string, workspace: R4StudioProjectWorkspace) {
 		this.root = root;
@@ -108,7 +129,8 @@ export class StudioProjectService {
 			sequence: this.#sequence,
 			workspace: this.workspace,
 			documents: this.documents,
-			issues: this.issues
+			issues: this.issues,
+			auditSequence: this.#auditSequence
 		};
 	}
 
@@ -147,44 +169,374 @@ export class StudioProjectService {
 		};
 	}
 
-	async setProperty(
+	async applyIntent(
 		requestId: number,
 		sessionId: string,
 		documentId: string,
-		intent: R4StudioSetPropertyIntent
-	): Promise<Extract<R4StudioProjectResponse, { type: 'mutation' | 'conflict' | 'rejected' }>> {
+		value: unknown
+	): Promise<MutationResponse> {
 		this.#assertSession(sessionId);
 		this.#assertDocumentId(documentId);
-		return this.#enqueueMutation(documentId, async () => {
-			const current = await this.#currentSnapshot(documentId);
-			if (intent.target.document.id !== documentId || intent.target.document.revision !== current.document.revision) {
-				return this.#conflict(requestId, intent.target.document, current);
+		const validation = validateStudioEditIntent(value);
+		if (!validation.valid) {
+			return this.#rejected(requestId, validation.code, validation.reason, {
+				documentId,
+				operation: 'invalid',
+				origin: { type: 'unknown' }
+			});
+		}
+		const intent = validation.intent;
+		if (intent.target.document.id !== documentId) {
+			return this.#rejected(requestId, 'document-mismatch', 'The Studio edit intent targets another document.', {
+				documentId,
+				intentId: intent.id,
+				operation: intent.operation.type,
+				property: intent.operation.property,
+				origin: intent.origin,
+				expectedRevision: intent.target.document.revision
+			});
+		}
+		const fingerprint = intentFingerprint(intent);
+		const existing = this.#intentResults.get(intent.id);
+		if (existing) {
+			if (existing.fingerprint === fingerprint && existing.response) {
+				if (await this.#mutationResultIsCurrent(documentId, existing.response, 'undo')) return { ...existing.response, requestId };
+				return this.#rejected(requestId, 'intent-result-superseded', 'The Studio edit intent completed, but a newer source revision superseded its result.', {
+					documentId,
+					intentId: intent.id,
+					operation: intent.operation.type,
+					property: intent.operation.property,
+					origin: intent.origin,
+					expectedRevision: intent.target.document.revision
+				});
 			}
-			const plan = planStudioSetProperty(current, intent);
-			if (plan.status === 'unchanged') return this.#unchanged(requestId);
-			if (plan.status === 'unavailable') return this.#rejected(requestId, `The property edit is unavailable: ${plan.reason}.`);
-			return this.#applyTransaction(requestId, documentId, current, plan.transaction);
+			if (existing.fingerprint === fingerprint) {
+				return this.#rejected(requestId, 'intent-result-expired', 'The Studio edit intent was already consumed and its result expired.', {
+					documentId,
+					intentId: intent.id,
+					operation: intent.operation.type,
+					property: intent.operation.property,
+					origin: intent.origin,
+					expectedRevision: intent.target.document.revision
+				});
+			}
+			return this.#rejected(requestId, 'intent-id-reused', 'The Studio edit intent ID was already used for a different payload.', {
+				documentId,
+				intentId: intent.id,
+				operation: intent.operation.type,
+				property: intent.operation.property,
+				origin: intent.origin,
+				expectedRevision: intent.target.document.revision
+			});
+		}
+		const active = this.#intentOperations.get(intent.id);
+		if (active) {
+			if (active.fingerprint === fingerprint) {
+				const response = await active.response;
+				if (await this.#mutationResultIsCurrent(documentId, response, 'undo')) return { ...response, requestId };
+				return this.#rejected(requestId, 'intent-result-superseded', 'The Studio edit intent completed, but a newer source revision superseded its result.', {
+					documentId,
+					intentId: intent.id,
+					operation: intent.operation.type,
+					property: intent.operation.property,
+					origin: intent.origin,
+					expectedRevision: intent.target.document.revision
+				});
+			}
+			return this.#rejected(requestId, 'intent-id-reused', 'The Studio edit intent ID is already in use for a different payload.', {
+				documentId,
+				intentId: intent.id,
+				operation: intent.operation.type,
+				property: intent.operation.property,
+				origin: intent.origin,
+				expectedRevision: intent.target.document.revision
+			});
+		}
+		if (this.#intentResults.size + this.#intentOperations.size >= MAX_INTENT_RESULTS) {
+			return this.#rejected(requestId, 'intent-capacity', 'The Studio edit session reached its bounded intent capacity.', {
+				documentId,
+				intentId: intent.id,
+				operation: intent.operation.type,
+				property: intent.operation.property,
+				origin: intent.origin,
+				expectedRevision: intent.target.document.revision
+			});
+		}
+		const operation = this.#enqueueMutation(documentId, async () => {
+			const current = await this.#currentSnapshot(documentId);
+			const audit: AuditInput = {
+				documentId,
+				intentId: intent.id,
+				operation: intent.operation.type,
+				property: intent.operation.property,
+				origin: intent.origin,
+				expectedRevision: intent.target.document.revision,
+				beforeRevision: current.document.revision
+			};
+			let response: MutationResponse;
+			if (intent.target.document.id !== documentId || intent.target.document.revision !== current.document.revision) {
+				response = this.#conflict(requestId, intent.target.document, current, audit);
+			} else {
+				const plan = planStudioEditIntent(current, intent);
+				if (plan.status === 'unchanged') response = this.#unchanged(requestId, audit, current.document.revision);
+				else if (plan.status === 'unavailable') {
+					response = this.#rejected(requestId, plan.reason, `The property edit is unavailable: ${plan.reason}.`, audit);
+				} else if (this.#historyTransactions.size + this.#historyReservations >= MAX_HISTORY_TRANSACTIONS) {
+					response = this.#rejected(requestId, 'history-capacity', 'The Studio history capacity is full for this service session.', audit);
+				} else {
+					this.#historyReservations += 1;
+					try {
+						response = await this.#applyTransaction(requestId, documentId, current, plan.transaction, audit);
+					} finally {
+						this.#historyReservations -= 1;
+					}
+					if (response.type === 'mutation' && response.status === 'applied') this.#registerHistory(response.applied.undo, 'undo');
+				}
+			}
+			this.#rememberIntent(intent.id, fingerprint, response);
+			return response;
 		});
+		this.#intentOperations.set(intent.id, { fingerprint, response: operation });
+		try {
+			return await operation;
+		} finally {
+			if (this.#intentOperations.get(intent.id)?.response === operation) this.#intentOperations.delete(intent.id);
+		}
 	}
 
-	async applyTransaction(
+	async applyHistory(
 		requestId: number,
 		sessionId: string,
 		documentId: string,
-		transaction: R4StudioSourceTransaction
-	): Promise<Extract<R4StudioProjectResponse, { type: 'mutation' | 'conflict' | 'rejected' }>> {
+		value: unknown,
+		directionValue: unknown
+	): Promise<MutationResponse> {
 		this.#assertSession(sessionId);
 		this.#assertDocumentId(documentId);
-		return this.#enqueueMutation(documentId, async () => {
-			const current = await this.#currentSnapshot(documentId);
-			if (transaction.document.id !== documentId || transaction.document.revision !== current.document.revision) {
-				return this.#conflict(requestId, transaction.document, current);
+		if (!validHistoryTransaction(value) || (directionValue !== 'undo' && directionValue !== 'redo')) {
+			return this.#rejected(requestId, 'invalid-history', 'The history transaction payload is invalid.', {
+				documentId,
+				operation: 'invalid',
+				origin: { type: 'unknown' }
+			});
+		}
+		const transaction = value;
+		const direction = directionValue;
+		if (transaction.document.id !== documentId) {
+			return this.#rejected(requestId, 'invalid-history', 'The history transaction targets another Studio document.', {
+				documentId,
+				transactionId: transaction.id,
+				operation: direction,
+				origin: { type: 'history', direction },
+				expectedRevision: transaction.document.revision
+			});
+		}
+		const fingerprint = transactionFingerprint(transaction);
+		const completed = this.#historyResults.get(transaction.id);
+		if (completed) {
+			if (completed.fingerprint === fingerprint && completed.direction === direction) {
+				if (await this.#mutationResultIsCurrent(documentId, completed.response, direction === 'undo' ? 'redo' : 'undo')) return { ...completed.response, requestId };
+				return this.#rejected(requestId, 'history-result-superseded', 'The history transaction completed, but a newer source revision superseded its result.', {
+					documentId,
+					transactionId: transaction.id,
+					operation: direction,
+					origin: { type: 'history', direction },
+					expectedRevision: transaction.document.revision
+				});
 			}
-			return this.#applyTransaction(requestId, documentId, current, transaction);
+			return this.#rejected(requestId, 'invalid-history', 'The history transaction ID was already used for another payload.', {
+				documentId,
+				transactionId: transaction.id,
+				operation: direction,
+				origin: { type: 'history', direction },
+				expectedRevision: transaction.document.revision
+			});
+		}
+		const active = this.#historyOperations.get(transaction.id);
+		if (active) {
+			if (active.fingerprint === fingerprint && active.direction === direction) {
+				const response = await active.response;
+				if (await this.#mutationResultIsCurrent(documentId, response, direction === 'undo' ? 'redo' : 'undo')) return { ...response, requestId };
+				return this.#rejected(requestId, 'history-result-superseded', 'The history transaction completed, but a newer source revision superseded its result.', {
+					documentId,
+					transactionId: transaction.id,
+					operation: direction,
+					origin: { type: 'history', direction },
+					expectedRevision: transaction.document.revision
+				});
+			}
+			return this.#rejected(requestId, 'invalid-history', 'The history transaction ID is already in use for another payload.', {
+				documentId,
+				transactionId: transaction.id,
+				operation: direction,
+				origin: { type: 'history', direction },
+				expectedRevision: transaction.document.revision
+			});
+		}
+		const issued = this.#historyTransactions.get(transaction.id);
+		const audit: AuditInput = {
+			documentId,
+			transactionId: transaction.id,
+			operation: direction,
+			origin: { type: 'history', direction },
+			expectedRevision: transaction.document.revision
+		};
+		if (!issued || issued.fingerprint !== fingerprint || issued.direction !== direction) {
+			return this.#rejected(requestId, 'invalid-history', 'The history transaction was not issued by this Studio service session.', audit);
+		}
+		const operation = this.#enqueueMutation(documentId, async () => {
+			const issued = this.#historyTransactions.get(transaction.id);
+			let response: MutationResponse;
+			if (!issued || issued.fingerprint !== fingerprint || issued.direction !== direction) {
+				response = this.#rejected(requestId, 'invalid-history', 'The history transaction was not issued by this Studio service session.', audit);
+			} else {
+				const current = await this.#currentSnapshot(documentId);
+				audit.beforeRevision = current.document.revision;
+				if (transaction.document.revision !== current.document.revision) {
+					this.#historyTransactions.delete(transaction.id);
+					response = this.#conflict(requestId, transaction.document, current, audit);
+				} else {
+					response = await this.#applyTransaction(requestId, documentId, current, transaction, audit);
+					this.#historyTransactions.delete(transaction.id);
+					if (response.type === 'mutation' && response.status === 'applied') {
+						const nextDirection = direction === 'undo' ? 'redo' : 'undo';
+						response.applied.undo.label = `${nextDirection === 'undo' ? 'Undo' : 'Redo'} ${historyLabel(transaction.label)}`;
+						this.#registerHistory(response.applied.undo, nextDirection);
+					}
+				}
+			}
+			this.#rememberHistory(transaction.id, fingerprint, direction, response);
+			return response;
 		});
+		this.#historyOperations.set(transaction.id, { fingerprint, direction, response: operation });
+		try {
+			return await operation;
+		} finally {
+			if (this.#historyOperations.get(transaction.id)?.response === operation) this.#historyOperations.delete(transaction.id);
+		}
+	}
+
+	readAudit(requestId: number, sessionId: string): Extract<R4StudioProjectResponse, { type: 'audit' }> {
+		this.#assertSession(sessionId);
+		return {
+			type: 'audit',
+			protocolVersion: R4_STUDIO_PROJECT_PROTOCOL_VERSION,
+			requestId,
+			sessionId: this.sessionId,
+			records: [...this.#audit]
+		};
+	}
+
+	async lookupIntent(
+		requestId: number,
+		sessionId: string,
+		documentId: string,
+		value: unknown
+	): Promise<Extract<R4StudioProjectResponse, { type: 'reconciliation' | 'intent-pending' | 'intent-missing' }>> {
+		this.#assertSession(sessionId);
+		this.#assertDocumentId(documentId);
+		const validation = validateStudioEditIntent(value);
+		const intentId = validation.valid ? validation.intent.id : '';
+		if (validation.valid && validation.intent.target.document.id === documentId) {
+			const fingerprint = intentFingerprint(validation.intent);
+			const active = this.#intentOperations.get(intentId);
+			if (active?.fingerprint === fingerprint) {
+				return {
+					type: 'intent-pending',
+					protocolVersion: R4_STUDIO_PROJECT_PROTOCOL_VERSION,
+					requestId,
+					sessionId: this.sessionId,
+					intentId
+				};
+			}
+			const result = this.#intentResults.get(intentId);
+			if (
+				result?.fingerprint === fingerprint &&
+				result.response &&
+				await this.#mutationResultIsCurrent(documentId, result.response, 'undo')
+			) {
+				return this.#reconciliationResponse(requestId, 'intent', documentId, result.response);
+			}
+		}
+		return {
+			type: 'intent-missing',
+			protocolVersion: R4_STUDIO_PROJECT_PROTOCOL_VERSION,
+			requestId,
+			sessionId: this.sessionId,
+			intentId
+		};
+	}
+
+	async lookupHistory(
+		requestId: number,
+		sessionId: string,
+		documentId: string,
+		value: unknown,
+		directionValue: unknown
+	): Promise<Extract<R4StudioProjectResponse, { type: 'reconciliation' | 'history-pending' | 'history-missing' }>> {
+		this.#assertSession(sessionId);
+		this.#assertDocumentId(documentId);
+		if (validHistoryTransaction(value) && value.document.id === documentId && (directionValue === 'undo' || directionValue === 'redo')) {
+			const fingerprint = transactionFingerprint(value);
+			const active = this.#historyOperations.get(value.id);
+			if (active?.fingerprint === fingerprint && active.direction === directionValue) {
+				return {
+					type: 'history-pending',
+					protocolVersion: R4_STUDIO_PROJECT_PROTOCOL_VERSION,
+					requestId,
+					sessionId: this.sessionId,
+					transactionId: value.id
+				};
+			}
+			const result = this.#historyResults.get(value.id);
+			if (
+				result?.fingerprint === fingerprint &&
+				result.direction === directionValue &&
+				await this.#mutationResultIsCurrent(documentId, result.response, directionValue === 'undo' ? 'redo' : 'undo')
+			) {
+				return this.#reconciliationResponse(requestId, 'history', documentId, result.response);
+			}
+		}
+		return {
+			type: 'history-missing',
+			protocolVersion: R4_STUDIO_PROJECT_PROTOCOL_VERSION,
+			requestId,
+			sessionId: this.sessionId,
+			transactionId: validHistoryTransaction(value) ? value.id : ''
+		};
 	}
 
 	async rescan(emit = true): Promise<boolean> {
+		this.#rescanEmit ||= emit;
+		if (this.#rescanOperation) {
+			this.#rescanAgain = true;
+			return this.#rescanOperation;
+		}
+		while (this.#manifestMutation) await this.#manifestMutation;
+		if (this.#rescanOperation) {
+			this.#rescanAgain = true;
+			return this.#rescanOperation;
+		}
+		const operation = (async () => {
+			let changedAny = false;
+			do {
+				this.#rescanAgain = false;
+				const emitChanges = this.#rescanEmit;
+				this.#rescanEmit = false;
+				const changed = await this.#refreshManifest(emitChanges);
+				changedAny ||= changed;
+			} while (this.#rescanAgain);
+			return changedAny;
+		})();
+		this.#rescanOperation = operation;
+		try {
+			return await operation;
+		} finally {
+			if (this.#rescanOperation === operation) this.#rescanOperation = null;
+		}
+	}
+
+	async #refreshManifest(emit: boolean): Promise<boolean> {
 		const { documents, issues } = await this.#discover();
 		const changed = !sameManifest(this.#documents, documents) || JSON.stringify(this.#issues) !== JSON.stringify(issues);
 		this.#documents = documents;
@@ -209,6 +561,53 @@ export class StudioProjectService {
 		return () => this.#listeners.delete(listener);
 	}
 
+	async #reconciliationResponse(
+		requestId: number,
+		operation: 'intent' | 'history',
+		documentId: string,
+		result: MutationResponse
+	): Promise<Extract<R4StudioProjectResponse, { type: 'reconciliation' }>> {
+		const current = await this.#currentSnapshot(documentId);
+		return {
+			type: 'reconciliation',
+			protocolVersion: R4_STUDIO_PROJECT_PROTOCOL_VERSION,
+			requestId,
+			sessionId: this.sessionId,
+			operation,
+			current: current.document,
+			result
+		};
+	}
+
+	async #mutationResultIsCurrent(
+		documentId: string,
+		result: MutationResponse,
+		inverseDirection: 'undo' | 'redo'
+	): Promise<boolean> {
+		if (result.type === 'rejected') return true;
+		const current = await this.#currentSnapshot(documentId);
+		if (mutationResultRevision(result) !== current.document.revision) return false;
+		if (result.type !== 'mutation' || result.status !== 'applied') return true;
+		const capability = this.#historyTransactions.get(result.applied.undo.id);
+		return capability?.direction === inverseDirection && capability.fingerprint === transactionFingerprint(result.applied.undo);
+	}
+
+	async #beginManifestMutation(): Promise<() => void> {
+		while (this.#manifestMutation || this.#rescanOperation) {
+			if (this.#manifestMutation) await this.#manifestMutation;
+			else if (this.#rescanOperation) await this.#rescanOperation;
+		}
+		let release!: () => void;
+		const lock = new Promise<void>((resolveLock) => {
+			release = resolveLock;
+		});
+		this.#manifestMutation = lock;
+		return () => {
+			if (this.#manifestMutation === lock) this.#manifestMutation = null;
+			release();
+		};
+	}
+
 	async #currentSnapshot(documentId: string) {
 		if (!this.#documents.has(documentId)) {
 			throw new StudioProjectServiceError('document-not-found', `The project document "${documentId}" is not available.`);
@@ -220,32 +619,54 @@ export class StudioProjectService {
 		requestId: number,
 		documentId: string,
 		current: Awaited<ReturnType<typeof analyzeStudioProjectSource>>,
-		transaction: R4StudioSourceTransaction
-	): Promise<Extract<R4StudioProjectResponse, { type: 'mutation' | 'conflict' | 'rejected' }>> {
+		transaction: R4StudioSourceTransaction,
+		audit: AuditInput
+	): Promise<MutationResponse> {
 		let applied;
 		try {
 			applied = await applyStudioSourceTransaction(current, transaction);
+			applied = {
+				...applied,
+				undo: { ...applied.undo, id: this.#historyCapabilityId() }
+			};
 		} catch (error) {
-			return this.#rejected(requestId, error instanceof Error ? error.message : 'The source transaction was rejected.');
+			return this.#rejected(
+				requestId,
+				'invalid-transaction',
+				error instanceof Error ? error.message : 'The source transaction was rejected.',
+				audit
+			);
 		}
 
-		const latest = await this.#currentSnapshot(documentId);
-		if (latest.document.revision !== current.document.revision) return this.#conflict(requestId, current.document, latest);
-		const wrote = await this.#writeSource(documentId, current.document.revision, applied.snapshot.source);
-		if (!wrote) {
-			const conflict = await this.#currentSnapshot(documentId);
-			return this.#conflict(requestId, current.document, conflict);
+		const releaseManifest = await this.#beginManifestMutation();
+		try {
+			const latest = await this.#currentSnapshot(documentId);
+			if (latest.document.revision !== current.document.revision) return this.#conflict(requestId, current.document, latest, audit);
+			const wrote = await this.#writeSource(documentId, current.document.revision, applied.snapshot.source);
+			if (!wrote) {
+				const conflict = await this.#currentSnapshot(documentId);
+				return this.#conflict(requestId, current.document, conflict, audit);
+			}
+			try {
+				await this.#refreshManifest(false);
+			} catch {
+				const indexed = this.#documents.get(documentId);
+				if (indexed) this.#documents.set(documentId, { ...indexed, revision: applied.snapshot.document.revision });
+			}
+			const record = this.#recordAudit(audit, 'applied', 'applied', applied.snapshot.document.revision);
+			this.#publishManifest(transaction.id);
+			return {
+				type: 'mutation',
+				status: 'applied',
+				protocolVersion: R4_STUDIO_PROJECT_PROTOCOL_VERSION,
+				requestId,
+				sessionId: this.sessionId,
+				applied,
+				audit: record
+			};
+		} finally {
+			releaseManifest();
 		}
-		await this.rescan(false);
-		setTimeout(() => this.#publishManifest(transaction.id), 0);
-		return {
-			type: 'mutation',
-			status: 'applied',
-			protocolVersion: R4_STUDIO_PROJECT_PROTOCOL_VERSION,
-			requestId,
-			sessionId: this.sessionId,
-			applied
-		};
 	}
 
 	async #writeSource(documentId: string, expectedRevision: string, source: string): Promise<boolean> {
@@ -290,7 +711,8 @@ export class StudioProjectService {
 	#conflict(
 		requestId: number,
 		expected: { id: string; revision: string },
-		current: Awaited<ReturnType<typeof analyzeStudioProjectSource>>
+		current: Awaited<ReturnType<typeof analyzeStudioProjectSource>>,
+		audit: AuditInput
 	): Extract<R4StudioProjectResponse, { type: 'conflict' }> {
 		return {
 			type: 'conflict',
@@ -298,28 +720,90 @@ export class StudioProjectService {
 			requestId,
 			sessionId: this.sessionId,
 			expected,
-			current
+			current,
+			audit: this.#recordAudit(audit, 'conflict', 'stale-revision', current.document.revision)
 		};
 	}
 
-	#rejected(requestId: number, reason: string): Extract<R4StudioProjectResponse, { type: 'rejected' }> {
+	#rejected(requestId: number, code: string, reason: string, audit: AuditInput): Extract<R4StudioProjectResponse, { type: 'rejected' }> {
 		return {
 			type: 'rejected',
 			protocolVersion: R4_STUDIO_PROJECT_PROTOCOL_VERSION,
 			requestId,
 			sessionId: this.sessionId,
-			reason
+			code,
+			reason,
+			audit: this.#recordAudit(audit, 'rejected', code)
 		};
 	}
 
-	#unchanged(requestId: number): Extract<R4StudioProjectResponse, { type: 'mutation'; status: 'unchanged' }> {
+	#unchanged(
+		requestId: number,
+		audit: AuditInput,
+		resultRevision: string
+	): Extract<R4StudioProjectResponse, { type: 'mutation'; status: 'unchanged' }> {
 		return {
 			type: 'mutation',
 			status: 'unchanged',
 			protocolVersion: R4_STUDIO_PROJECT_PROTOCOL_VERSION,
 			requestId,
-			sessionId: this.sessionId
+			sessionId: this.sessionId,
+			audit: this.#recordAudit(audit, 'unchanged', 'unchanged', resultRevision)
 		};
+	}
+
+	#recordAudit(
+		input: AuditInput,
+		outcome: R4StudioAuditRecord['outcome'],
+		code: string,
+		resultRevision?: string
+	): R4StudioAuditRecord {
+		const record: R4StudioAuditRecord = {
+			...input,
+			sequence: ++this.#auditSequence,
+			timestamp: new Date().toISOString(),
+			sessionId: this.sessionId,
+			outcome,
+			code,
+			resultRevision
+		};
+		this.#audit.push(record);
+		if (this.#audit.length > MAX_AUDIT_RECORDS) this.#audit.splice(0, this.#audit.length - MAX_AUDIT_RECORDS);
+		return record;
+	}
+
+	#rememberIntent(intentId: string, fingerprint: string, response: MutationResponse) {
+		this.#intentResults.set(intentId, { fingerprint, response });
+		let retained = 0;
+		for (const [id, result] of [...this.#intentResults].reverse()) {
+			if (!result.response) continue;
+			retained += 1;
+			if (retained > MAX_RECONCILIATION_RESULTS) this.#intentResults.set(id, { fingerprint: result.fingerprint });
+		}
+	}
+
+	#registerHistory(transaction: R4StudioSourceTransaction, direction: 'undo' | 'redo') {
+		this.#historyTransactions.set(transaction.id, { fingerprint: transactionFingerprint(transaction), direction });
+	}
+
+	#historyCapabilityId(): string {
+		let id = randomUUID();
+		while (this.#historyTransactions.has(id) || this.#historyResults.has(id) || this.#historyOperations.has(id)) id = randomUUID();
+		return id;
+	}
+
+	#rememberHistory(
+		transactionId: string,
+		fingerprint: string,
+		direction: 'undo' | 'redo',
+		response: MutationResponse
+	) {
+		this.#historyResults.set(transactionId, { fingerprint, direction, response });
+		while (this.#historyResults.size > MAX_RECONCILIATION_RESULTS) {
+			const oldest = this.#historyResults.keys().next().value;
+			if (typeof oldest !== 'string') break;
+			this.#historyResults.delete(oldest);
+		}
 	}
 
 	async #enqueueMutation<T>(documentId: string, operation: () => Promise<T>): Promise<T> {
@@ -349,6 +833,7 @@ export class StudioProjectService {
 		const segments = documentId.split('/');
 		if (
 			!documentId ||
+			documentId.length > 1_024 ||
 			documentId.includes('\0') ||
 			documentId.includes('\\') ||
 			isAbsolute(documentId) ||
@@ -511,4 +996,65 @@ function titleFromDocumentId(documentId: string): string {
 		.filter(Boolean)
 		.map((part) => `${part[0]?.toUpperCase() ?? ''}${part.slice(1)}`)
 		.join(' ');
+}
+
+function transactionFingerprint(transaction: R4StudioSourceTransaction): string {
+	return hashFingerprint(JSON.stringify({
+		schema: transaction.schema,
+		version: transaction.version,
+		id: transaction.id,
+		document: transaction.document,
+		label: transaction.label,
+		edits: transaction.edits,
+		reverses: transaction.reverses
+	}));
+}
+
+function mutationResultRevision(result: MutationResponse): string | undefined {
+	if (result.type === 'mutation' && result.status === 'applied') return result.applied.snapshot.document.revision;
+	if (result.type === 'mutation') return result.audit.resultRevision;
+	if (result.type === 'conflict') return result.current.document.revision;
+	return undefined;
+}
+
+function intentFingerprint(intent: R4StudioEditIntent): string {
+	return hashFingerprint(serializeStudioEditIntent(intent));
+}
+
+function hashFingerprint(value: string): string {
+	return createHash('sha256').update(value).digest('hex');
+}
+
+function historyLabel(label: string): string {
+	return label.replace(/^(?:Undo |Redo )+/, '');
+}
+
+function validHistoryTransaction(value: unknown): value is R4StudioSourceTransaction {
+	if (!isRecord(value) || value.schema !== 'r4.studio.source-transaction' || value.version !== R4_STUDIO_EDIT_VERSION) return false;
+	if (!boundedString(value.id, 1, 256) || !boundedString(value.label, 1, 512)) return false;
+	if (value.reverses !== undefined && !boundedString(value.reverses, 1, 256)) return false;
+	if (!isRecord(value.document) || !boundedString(value.document.id, 1, 1_024) || !boundedString(value.document.revision, 1, 128)) return false;
+	if (!Array.isArray(value.edits) || value.edits.length === 0 || value.edits.length > 1_000) return false;
+	let replacementLength = 0;
+	for (const edit of value.edits) {
+		if (
+			!isRecord(edit) ||
+			!Number.isSafeInteger(edit.start) ||
+			!Number.isSafeInteger(edit.end) ||
+			(edit.start as number) < 0 ||
+			(edit.end as number) < (edit.start as number) ||
+			typeof edit.replacement !== 'string'
+		) return false;
+		replacementLength += edit.replacement.length;
+		if (replacementLength > MAX_STUDIO_SOURCE_LENGTH) return false;
+	}
+	return true;
+}
+
+function boundedString(value: unknown, minimum: number, maximum: number): value is string {
+	return typeof value === 'string' && value.length >= minimum && value.length <= maximum;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

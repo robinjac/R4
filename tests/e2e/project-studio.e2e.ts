@@ -151,3 +151,77 @@ test('tracks a portaled Sheet through mounted and unmounted states', async ({ pa
 	await expect(overlay).toHaveCount(0);
 	await expect(page.locator('.runtime-selection')).toContainText('Sheet 0instances0targets / canvas');
 });
+
+test('exposes static editing reasons and complete keyboard tab semantics', async ({ page }) => {
+	await openProjectStudio(page);
+
+	const properties = page.getByRole('tab', { name: 'Properties', exact: true });
+	await properties.click();
+	await expect(page.getByText('Property editing requires the loopback local project service.', { exact: true })).toBeVisible();
+	await expect(page.getByRole('textbox', { name: /title/ })).toBeDisabled();
+
+	await properties.focus();
+	await properties.press('End');
+	const audit = page.getByRole('tab', { name: /Audit/ });
+	await expect(audit).toHaveAttribute('aria-selected', 'true');
+	await expect(audit).toHaveAttribute('tabindex', '0');
+	await expect(page.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', await audit.getAttribute('id') ?? '');
+	await audit.press('Tab');
+	await expect(page.getByRole('tabpanel')).toBeFocused();
+	await page.getByRole('tabpanel').press('Shift+Tab');
+	await expect(audit).toBeFocused();
+	await audit.press('Home');
+	await expect(page.getByRole('tab', { name: 'Composition', exact: true })).toHaveAttribute('aria-selected', 'true');
+});
+
+test('makes noninteractive Canvas primitives reachable with roving keyboard focus', async ({ page }) => {
+	await openProjectStudio(page, 'adaptive-grid');
+
+	const activeMarker = page.locator('.runtime-canvas [data-r4-studio-node][tabindex="0"]');
+	await expect(activeMarker).toHaveCount(1);
+	await activeMarker.focus();
+	const originalNode = await activeMarker.getAttribute('data-r4-studio-node');
+	await activeMarker.press('ArrowRight');
+
+	const focused = page.locator('.runtime-canvas [data-r4-studio-node]:focus');
+	await expect(focused).toHaveCount(1);
+	await expect(focused).not.toHaveAttribute('data-r4-studio-node', originalNode ?? '');
+	await expect(page.locator('.runtime-selection')).toContainText('/ canvas');
+	await expect(page.locator('.runtime-canvas [data-r4-studio-node][tabindex="0"]')).toHaveCount(1);
+
+	await page.getByRole('button', { name: 'Interact', exact: true }).click();
+	await expect(page.locator('.runtime-canvas [data-r4-primitive="Page"]')).not.toHaveAttribute('tabindex', '-1');
+});
+
+test('moves Canvas keyboard selection past disabled primitive roots', async ({ page }) => {
+	await openProjectStudio(page, 'primitive-tab');
+
+	const markers = page.locator('.runtime-canvas [data-r4-studio-node]');
+	const disabled = page.locator('.runtime-canvas [data-r4-primitive="Tab"]:disabled');
+	const disabledIndex = await markers.evaluateAll((elements) =>
+		elements.findIndex((element) => element.matches('[data-r4-primitive="Tab"]:disabled'))
+	);
+	expect(disabledIndex).toBeGreaterThan(0);
+	await page.locator('.runtime-canvas [data-r4-studio-node][tabindex="0"]').focus();
+	for (let index = 0; index < disabledIndex; index += 1) await page.keyboard.press('ArrowRight');
+	await expect(disabled).toHaveAttribute('data-r4-studio-selected', 'true');
+
+	await page.keyboard.press('ArrowRight');
+	await expect(disabled).not.toHaveAttribute('data-r4-studio-selected', 'true');
+	await expect(page.locator('.runtime-canvas [data-r4-studio-node]:focus')).toHaveCount(1);
+});
+
+test('isolates nested application controls until Canvas enters Interact mode', async ({ page }) => {
+	await openProjectStudio(page, 'primitive-input');
+
+	const input = page.locator('.runtime-canvas input').first();
+	await expect(input).toHaveValue('Ada');
+	await input.evaluate((element) => element.focus());
+	await expect(input).not.toBeFocused();
+	await page.keyboard.type('XYZ');
+	await expect(input).toHaveValue('Ada');
+
+	await page.getByRole('button', { name: 'Interact', exact: true }).click();
+	await input.fill('XYZ');
+	await expect(input).toHaveValue('XYZ');
+});

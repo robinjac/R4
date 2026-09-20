@@ -1,8 +1,9 @@
 import type { R4StudioDocumentRef, R4StudioSnapshot } from './types.js';
 import type { R4StudioAppliedTransaction, R4StudioSourceTransaction } from './contracts.js';
-import type { R4StudioSetPropertyIntent } from './inspector.js';
+import type { R4StudioAuditRecord } from './audit.js';
+import type { R4StudioEditIntent } from './intents.js';
 
-export const R4_STUDIO_PROJECT_PROTOCOL_VERSION = 1 as const;
+export const R4_STUDIO_PROJECT_PROTOCOL_VERSION = 2 as const;
 export const R4_STUDIO_PROJECT_REQUEST_EVENT = 'r4:studio:project:request';
 export const R4_STUDIO_PROJECT_RESPONSE_EVENT = 'r4:studio:project:response';
 export const R4_STUDIO_PROJECT_CHANGE_EVENT = 'r4:studio:project:change';
@@ -33,6 +34,7 @@ export interface R4StudioProjectWorkspace {
 export type R4StudioProjectConnection =
 	| { status: 'static' }
 	| { status: 'connecting' }
+	| { status: 'reconnecting'; workspace?: R4StudioProjectWorkspace; message: string }
 	| {
 			status: 'connected';
 			sessionId: string;
@@ -84,20 +86,81 @@ export type R4StudioProjectRequest =
 			sessionId: string;
 	  }
 	| {
-			type: 'set-property';
+			type: 'apply-intent';
 			protocolVersion: typeof R4_STUDIO_PROJECT_PROTOCOL_VERSION;
 			requestId: number;
 			sessionId: string;
 			documentId: string;
-			intent: R4StudioSetPropertyIntent;
+			intent: R4StudioEditIntent;
 	  }
 	| {
-			type: 'apply-transaction';
+			type: 'apply-history';
 			protocolVersion: typeof R4_STUDIO_PROJECT_PROTOCOL_VERSION;
 			requestId: number;
 			sessionId: string;
 			documentId: string;
 			transaction: R4StudioSourceTransaction;
+			direction: 'undo' | 'redo';
+	  }
+	| {
+			type: 'read-audit';
+			protocolVersion: typeof R4_STUDIO_PROJECT_PROTOCOL_VERSION;
+			requestId: number;
+			sessionId: string;
+	  }
+	| {
+			type: 'lookup-intent';
+			protocolVersion: typeof R4_STUDIO_PROJECT_PROTOCOL_VERSION;
+			requestId: number;
+			sessionId: string;
+			documentId: string;
+			intent: R4StudioEditIntent;
+	  }
+	| {
+			type: 'lookup-history';
+			protocolVersion: typeof R4_STUDIO_PROJECT_PROTOCOL_VERSION;
+			requestId: number;
+			sessionId: string;
+			documentId: string;
+			transaction: R4StudioSourceTransaction;
+			direction: 'undo' | 'redo';
+	  };
+
+export type R4StudioMutationResult =
+	| {
+			type: 'mutation';
+			status: 'applied';
+			protocolVersion: typeof R4_STUDIO_PROJECT_PROTOCOL_VERSION;
+			requestId: number;
+			sessionId: string;
+			applied: R4StudioAppliedTransaction;
+			audit: R4StudioAuditRecord;
+	  }
+	| {
+			type: 'mutation';
+			status: 'unchanged';
+			protocolVersion: typeof R4_STUDIO_PROJECT_PROTOCOL_VERSION;
+			requestId: number;
+			sessionId: string;
+			audit: R4StudioAuditRecord;
+	  }
+	| {
+			type: 'conflict';
+			protocolVersion: typeof R4_STUDIO_PROJECT_PROTOCOL_VERSION;
+			requestId: number;
+			sessionId: string;
+			expected: R4StudioDocumentRef;
+			current: R4StudioSnapshot;
+			audit: R4StudioAuditRecord;
+	  }
+	| {
+			type: 'rejected';
+			protocolVersion: typeof R4_STUDIO_PROJECT_PROTOCOL_VERSION;
+			requestId: number;
+			sessionId: string;
+			code: string;
+			reason: string;
+			audit: R4StudioAuditRecord;
 	  };
 
 export type R4StudioProjectResponse =
@@ -110,6 +173,7 @@ export type R4StudioProjectResponse =
 			workspace: R4StudioProjectWorkspace;
 			documents: R4StudioProjectDocument[];
 			issues: R4StudioProjectIssue[];
+			auditSequence: number;
 	  }
 	| {
 			type: 'snapshot';
@@ -126,35 +190,50 @@ export type R4StudioProjectResponse =
 			expectedRevision: string;
 			current: R4StudioDocumentRef;
 	  }
+	| R4StudioMutationResult
 	| {
-			type: 'mutation';
-			status: 'applied';
+			type: 'audit';
 			protocolVersion: typeof R4_STUDIO_PROJECT_PROTOCOL_VERSION;
 			requestId: number;
 			sessionId: string;
-			applied: R4StudioAppliedTransaction;
+			records: R4StudioAuditRecord[];
 	  }
 	| {
-			type: 'mutation';
-			status: 'unchanged';
+			type: 'intent-missing';
 			protocolVersion: typeof R4_STUDIO_PROJECT_PROTOCOL_VERSION;
 			requestId: number;
 			sessionId: string;
+			intentId: string;
 	  }
 	| {
-			type: 'conflict';
+			type: 'intent-pending';
 			protocolVersion: typeof R4_STUDIO_PROJECT_PROTOCOL_VERSION;
 			requestId: number;
 			sessionId: string;
-			expected: R4StudioDocumentRef;
-			current: R4StudioSnapshot;
+			intentId: string;
 	  }
 	| {
-			type: 'rejected';
+			type: 'history-missing';
 			protocolVersion: typeof R4_STUDIO_PROJECT_PROTOCOL_VERSION;
 			requestId: number;
 			sessionId: string;
-			reason: string;
+			transactionId: string;
+	  }
+	| {
+			type: 'history-pending';
+			protocolVersion: typeof R4_STUDIO_PROJECT_PROTOCOL_VERSION;
+			requestId: number;
+			sessionId: string;
+			transactionId: string;
+	  }
+	| {
+			type: 'reconciliation';
+			protocolVersion: typeof R4_STUDIO_PROJECT_PROTOCOL_VERSION;
+			requestId: number;
+			sessionId: string;
+			operation: 'intent' | 'history';
+			current: R4StudioDocumentRef;
+			result: R4StudioMutationResult;
 	  }
 	| {
 			type: 'error';

@@ -1,28 +1,30 @@
 <script lang="ts">
-	import { inspectStudioStaticProperties, type R4StudioEditableProperty, type R4StudioSetPropertyIntent } from './inspector.js';
+	import { inspectStudioStaticProperties, type R4StudioEditableProperty } from './inspector.js';
+	import { createStudioSetPropertyIntent, type R4StudioEditIntent, type R4StudioIntentOrigin } from './intents.js';
 	import type { R4StudioNodeRef, R4StudioSnapshot } from './types.js';
 
 	let {
 		snapshot,
 		selectedRef,
 		disabled = false,
+		disabledReason,
+		origin = { type: 'inspector' },
 		oncommit
 	}: {
 		snapshot: R4StudioSnapshot;
 		selectedRef: R4StudioNodeRef;
 		disabled?: boolean;
-		oncommit: (intent: R4StudioSetPropertyIntent) => void | Promise<void>;
+		disabledReason?: string;
+		origin?: R4StudioIntentOrigin;
+		oncommit: (intent: R4StudioEditIntent) => unknown | Promise<unknown>;
 	} = $props();
 
+	const componentId = $props.id();
+	const disabledReasonId = `${componentId}-disabled`;
 	let properties = $derived(inspectStudioStaticProperties(snapshot, selectedRef));
 
-	function intent(property: R4StudioEditableProperty, value: string | number | boolean): R4StudioSetPropertyIntent {
-		return {
-			id: crypto.randomUUID(),
-			target: property.target,
-			property: property.name,
-			value
-		};
+	function intent(property: R4StudioEditableProperty, value: string | number | boolean): R4StudioEditIntent {
+		return createStudioSetPropertyIntent(property.target, property.name, value, origin);
 	}
 
 	function submitText(event: SubmitEvent, property: R4StudioEditableProperty) {
@@ -36,13 +38,20 @@
 		event.preventDefault();
 		const form = event.currentTarget as HTMLFormElement;
 		const raw = new FormData(form).get('value');
-		if (typeof raw !== 'string' || raw.trim() === '') return;
+		const input = form.elements.namedItem('value');
+		if (!(input instanceof HTMLInputElement) || typeof raw !== 'string' || raw.trim() === '') return;
 		const value = Number(raw);
-		if (Number.isFinite(value)) void oncommit(intent(property, value));
+		input.setCustomValidity(Number.isFinite(value) ? '' : 'Enter a finite number.');
+		if (!Number.isFinite(value)) {
+			input.reportValidity();
+			return;
+		}
+		void oncommit(intent(property, value));
 	}
 </script>
 
 <div class="properties" aria-label="Editable properties">
+	{#if disabled && disabledReason}<p class="disabled-reason" id={disabledReasonId}>{disabledReason}</p>{/if}
 	{#if properties.length === 0}
 		<div class="empty"><strong>Source-only selection</strong><span>No existing static scalar attributes can be edited safely for this node.</span></div>
 	{:else}
@@ -54,6 +63,7 @@
 						type="checkbox"
 						checked={property.value}
 						{disabled}
+						aria-describedby={disabled && disabledReason ? disabledReasonId : undefined}
 						onchange={(event) => void oncommit(intent(property, event.currentTarget.checked))}
 					/>
 				</label>
@@ -65,8 +75,10 @@
 							name="value"
 							type={typeof property.value === 'number' ? 'number' : 'text'}
 							step={typeof property.value === 'number' ? 'any' : undefined}
+							required={typeof property.value === 'number'}
 							value={property.value}
 							{disabled}
+							aria-describedby={disabled && disabledReason ? disabledReasonId : undefined}
 						/>
 					</label>
 					<button type="submit" {disabled}>Apply</button>
@@ -150,6 +162,15 @@
 		padding: 18px;
 		color: #8e989b;
 		text-align: center;
+	}
+
+	.disabled-reason {
+		margin: 0;
+		border: 1px solid #4c5559;
+		background: #182226;
+		padding: 8px 10px;
+		color: #a9c7d5;
+		font: 0.56rem/1.45 var(--r4-font-mono);
 	}
 
 	.empty strong {

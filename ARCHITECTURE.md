@@ -135,6 +135,14 @@ stale revisions, writes through a same-directory temporary file, and returns exa
 transactions. The versioned runtime message contract keeps disconnected, simulated, and actual
 execution states explicit.
 
+Inspector, Canvas, and trusted in-process automation share `r4.studio.edit-intent` v1. The service
+canonicalizes semantic payloads, binds them to their request route, and uses stable IDs for
+session-scoped idempotency. Fixed-size service-issued history capabilities and payload-bound,
+revision-checked result polling let protocol v2 reconcile uncertain intent, undo, and redo responses
+after a same-session reconnect without replaying writes. A bounded, metadata-only audit journal
+records outcomes without source or property values. It is operational provenance, not a remote
+security identity or external automation API.
+
 Trusted repository previews also have a Studio-only Vite compilation. Exact Semantic IR ranges gain
 DOM-free context boundaries, and primitives attach artifact, node, and instance identity to their
 existing semantic roots. A primitive consumes its nearest identity before rendering children, so
@@ -154,6 +162,11 @@ channel. Its filesystem authority remains in the local Node process and is confi
 startup-approved, canonical workspace root. It discovers and stably reads regular `.r4.svelte`
 files, rejects child symlinks and path traversal, publishes revision manifests, and reports explicit
 connection and freshness state.
+
+Project-client reconnects preserve at-most-once mutation behavior. Coalesced serial rescans close
+manifest ordering races, sequence gaps force an authoritative rescan, and a replacement service
+session rejects old reconciliation and history capabilities. Studio invalidates local history across
+external changes and does not merge concurrent source edits.
 
 Arbitrary workspace source is analysis-only. Studio does not dynamically import it or extend Vite's
 filesystem allow-list. Only known, build-time repository modules have executable previews; a future

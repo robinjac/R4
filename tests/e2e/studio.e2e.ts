@@ -54,3 +54,19 @@ test('keeps Studio usable on a mobile viewport', async ({ page }) => {
 	const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 	expect(overflow).toBeLessThanOrEqual(1);
 });
+
+test('supports roving keyboard focus across analysis tabs and into the panel', async ({ page }) => {
+	await openStudio(page);
+
+	const diagnostics = page.getByRole('tab', { name: /Diagnostics/ });
+	await diagnostics.focus();
+	await diagnostics.press('ArrowRight');
+	const semantic = page.getByRole('tab', { name: 'Semantic IR' });
+	await expect(semantic).toBeFocused();
+	await expect(semantic).toHaveAttribute('aria-selected', 'true');
+	await semantic.press('End');
+	const snapshot = page.getByRole('tab', { name: 'Snapshot' });
+	await expect(snapshot).toBeFocused();
+	await snapshot.press('Tab');
+	await expect(page.getByRole('tabpanel')).toBeFocused();
+});

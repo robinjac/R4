@@ -26,6 +26,9 @@ This repository is intentionally a vertical slice, not a complete framework.
   rejection, and exact undo/redo through the same local service.
 - Source-derived Canvas selection with DOM-transparent runtime identity, zero/one/many instance
   tracking, opaque imported boundaries, portal support, and separate Select/Interact modes.
+- One validated, versioned edit-intent path for Inspector, Canvas, and trusted in-process automation,
+  with at-most-once reconnect reconciliation and service-issued undo/redo capabilities.
+- A bounded, metadata-only mutation audit Inspector plus roving tab and Canvas keyboard navigation.
 - An isolated Scratch analyzer with revision-qualified source, AST, IR, and diagnostics snapshots.
 - Clearly labeled Web, iOS, Android, macOS, and Windows browser preview modes.
 - A replaceable Lynx backend that lowers IR, generates an internal ReactLynx implementation, and
@@ -59,6 +62,11 @@ The Properties Inspector can update existing static scalar attributes while the 
 connected. Dynamic expressions and structural edits remain source-only; stale edits are rejected
 rather than silently merged.
 
+Canvas property controls and trusted in-process automation use that same semantic intent path. Lost
+responses are reconciled only within the same local service session and are never handled by replaying
+the write. The Audit Inspector records operation outcomes and revisions without source or property
+values.
+
 `bun run native:build` writes `native/lynx/dist/main.lynx.bundle`. Load it with Lynx Explorer or an
 embedded LynxView that uses a compatible engine.
 
@@ -85,4 +93,4 @@ discovers its component, raw source, compiler artifact, and Lynx projection auto
 ```
 
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for framework boundaries and [STUDIO.md](./STUDIO.md) for the
-Studio phase contracts and remaining work.
+completed browser-Studio phase contracts and deferred capabilities.

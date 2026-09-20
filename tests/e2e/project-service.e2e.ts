@@ -28,6 +28,16 @@ test('discovers, reads, and streams an approved local project without executing 
 	await page.getByRole('button', { name: 'Redo', exact: true }).click();
 	await expect(page.getByLabel('Selected project source')).toContainText('title="Edited in Studio"');
 
+	await page.getByRole('tab', { name: /Audit/ }).click();
+	const audit = page.getByRole('list', { name: 'Studio mutation audit' });
+	await expect(audit.locator('li')).toHaveCount(3);
+	await expect(audit).toContainText('set-property');
+	await expect(audit).toContainText('inspector');
+	await expect(audit).toContainText('undo');
+	await expect(audit).toContainText('redo');
+	await expect(audit).not.toContainText('Edited in Studio');
+	await page.getByRole('tab', { name: 'Source', exact: true }).click();
+
 	await writeFile(
 		fixture,
 		`<script lang="ts">\n\timport { Page, Text } from 'r4';\n</script>\n\n<Page title="Service fixture">\n\t<Text>Externally refreshed source</Text>\n</Page>\n`

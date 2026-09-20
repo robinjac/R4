@@ -5,6 +5,8 @@
 	import type { R4Node, R4Platform } from '../lib/compiler/index.js';
 	import { projectPlatform, type PlatformPolicyNode } from '../lib/policy.js';
 	import CompositionTree from '../workbench/CompositionTree.svelte';
+	import { createStudioAutomation } from './automation.js';
+	import type { R4StudioAuditRecord } from './audit.js';
 	import { R4_STUDIO_PROJECT_COMPILER_PROFILE } from './compiler-profile.js';
 	import type { R4StudioAppliedTransaction, R4StudioSourceTransaction } from './contracts.js';
 	import {
@@ -14,7 +16,7 @@
 		invalidateStudioHistory,
 		recordStudioEdit
 	} from './history.js';
-	import type { R4StudioSetPropertyIntent } from './inspector.js';
+	import type { R4StudioEditIntent } from './intents.js';
 	import { createStudioProjectClient, type R4StudioProjectClient } from './project-client.js';
 	import type { R4StudioProjectConnection, R4StudioDocumentFreshness, R4StudioProjectResponse, R4StudioProjectChange } from './project-protocol.js';
 	import { createStudioNodeRef, findStudioNodeAtOffset, resolveStudioNode } from './selection.js';
@@ -30,7 +32,8 @@
 	} from './project.js';
 	import type { R4StudioNodeRef, R4StudioRuntimeInstanceRef, R4StudioSnapshot } from './types.js';
 
-	type InspectorView = 'composition' | 'properties' | 'source' | 'semantic' | 'platform' | 'diagnostics';
+	type InspectorView = 'composition' | 'properties' | 'source' | 'semantic' | 'platform' | 'diagnostics' | 'audit';
+	type MutationResponse = Extract<R4StudioProjectResponse, { type: 'mutation' | 'conflict' | 'rejected' }>;
 
 	const platforms: Array<{ id: R4Platform; label: string }> = [
 		{ id: 'web', label: 'Web' },
@@ -45,7 +48,8 @@
 		{ id: 'source', label: 'Source' },
 		{ id: 'semantic', label: 'Semantic IR' },
 		{ id: 'platform', label: 'Platform IR' },
-		{ id: 'diagnostics', label: 'Diagnostics' }
+		{ id: 'diagnostics', label: 'Diagnostics' },
+		{ id: 'audit', label: 'Audit' }
 	];
 	const staticDefaultDocument = studioProjectDocuments.find((document) => document.id === 'field-operations') ?? studioProjectDocuments[0];
 	const initialDocumentId = staticDefaultDocument?.id ?? '';
@@ -63,6 +67,10 @@
 	let focusedRuntimeInstance = $state<R4StudioRuntimeInstanceRef | null>(null);
 	let runtimeInstances = $state(0);
 	let runtimeTargets = $state(0);
+	let auditRecords = $state<R4StudioAuditRecord[]>([]);
+	let auditState = $state<'idle' | 'loading' | 'ready' | 'stale' | 'failed'>('idle');
+	let auditSessionId: string | null = null;
+	let auditRequest = 0;
 	let connection = $state<R4StudioProjectConnection>({ status: 'static' });
 	let freshness = $state<R4StudioDocumentFreshness>('loading');
 	let projectMessage = $state('Loading the selected project source.');
@@ -77,6 +85,8 @@
 	let projectClient: R4StudioProjectClient | null = null;
 	let loadRequest = 0;
 	let lastLoadKey = '';
+	let canvasKeyboardMarker: HTMLElement | null = null;
+	const canvasTabIndexes = new WeakMap<HTMLElement, string | null>();
 	let defaultDocument = $derived(documents.find((document) => document.id === 'field-operations') ?? documents[0]);
 	let selected = $derived(studioProjectDocument(selectedId, documents) ?? (tombstone?.id === selectedId ? tombstone : defaultDocument));
 	let ir = $derived(snapshot?.compilation.ir ?? null);
@@ -91,18 +101,47 @@
 	let diagnostics = $derived([...(snapshot?.compilation.diagnostics ?? []), ...backendDiagnostics]);
 	let errorCount = $derived(diagnostics.filter((diagnostic) => diagnostic.severity === 'error').length);
 	let warningCount = $derived(diagnostics.filter((diagnostic) => diagnostic.severity === 'warning').length);
-	let preview = $derived(
-		selected?.preview && (connection.status === 'static' || (connection.status === 'connected' && connection.workspace.preview === 'repository'))
-			? selected.preview
+	let preview = $derived.by(() => {
+		if (!selected?.preview) return null;
+		if (connection.status === 'static') return selected.preview;
+		if ('workspace' in connection && connection.workspace?.preview === 'repository') return selected.preview;
+		return null;
+	});
+	let canvasPreview = $derived(
+		preview && (
+			connection.status === 'static'
+				? !snapshot || snapshot.source === preview.source
+				: snapshot?.source === preview.source &&
+					snapshot.document.id === selected?.serviceId &&
+					snapshot.document.revision === selected?.revision
+		)
+			? preview
 			: null
 	);
-	let canvasPreview = $derived(preview && (!snapshot || snapshot.source === preview.source) ? preview : null);
 	let editingEnabled = $derived(
 		connection.status === 'connected' &&
 		connection.workspace.capabilities.write &&
 		freshness === 'current' &&
-		Boolean(selected?.serviceId && snapshot && selectedRef)
+		Boolean(
+			selected?.serviceId &&
+			snapshot &&
+			selectedRef &&
+			snapshot.document.id === selected.serviceId &&
+			snapshot.document.revision === selected.revision
+		)
 	);
+	let editingDisabledReason = $derived.by(() => {
+		if (connection.status === 'static') return 'Property editing requires the loopback local project service.';
+		if (connection.status === 'connecting' || connection.status === 'reconnecting') return 'Property editing is unavailable while the local project service reconnects.';
+		if (connection.status === 'disconnected') return 'Property editing is unavailable while the local project service is disconnected.';
+		if (connection.status === 'failed') return 'Property editing is unavailable because the local project service failed.';
+		if (!connection.workspace.capabilities.write) return 'This workspace is read-only.';
+		if (freshness !== 'current') return 'Refresh the authoritative source before editing.';
+		if (!selected?.serviceId || !snapshot || !selectedRef) return 'Select a current project primitive before editing.';
+		if (snapshot.document.id !== selected.serviceId || snapshot.document.revision !== selected.revision) return 'Refresh the authoritative source before editing.';
+		if (mutationPending) return 'Wait for the current Studio mutation to finish.';
+		return undefined;
+	});
 	let normalizedSearch = $derived(search.trim().toLowerCase());
 	let visibleGroups = $derived(
 		groupStudioProjectDocuments(documents)
@@ -117,12 +156,13 @@
 
 	setContext('r4:embedded-page', true);
 	setContext('r4:overlay-host', () => overlayHost);
+	setContext('r4:studio-automation', createStudioAutomation(commitIntent));
 
 	$effect(() => {
 		const document = selected;
 		if (!document) return;
-		const mode = connection.status === 'connected' && document.serviceId ? `service:${connection.sessionId}` : 'static';
-		const key = `${mode}:${document.serviceId ?? document.id}:${document.revision ?? document.preview?.source.length ?? 0}`;
+		if (document.serviceId && connection.status !== 'connected') return;
+		const key = documentLoadKey(document);
 		if (key === lastLoadKey || (freshness === 'deleted' && tombstone?.id === document.id)) return;
 		lastLoadKey = key;
 		void loadDocument(document);
@@ -132,29 +172,46 @@
 		selectedRef;
 		focusedRuntimeInstance;
 		canvasPreview;
+		canvasMode;
 		queueMicrotask(updateCanvasSelection);
+	});
+
+	$effect(() => {
+		if (inspectorView === 'audit' && connection.status === 'connected') void refreshAudit();
 	});
 
 	onMount(() => {
 		const selectFromLocation = () => {
 			const requested = new URL(window.location.href).searchParams.get('document');
 			requestedDocumentId = requested || defaultDocument?.id || '';
-			selectedId = studioProjectDocument(requestedDocumentId, documents)?.id || defaultDocument?.id || '';
+			const nextSelectedId = studioProjectDocument(requestedDocumentId, documents)?.id || defaultDocument?.id || '';
+			if (nextSelectedId !== selectedId) clearDocumentView('Loading the selected project source.');
+			selectedId = nextSelectedId;
 		};
 		selectFromLocation();
 		window.addEventListener('popstate', selectFromLocation);
 		projectClient = createStudioProjectClient({
-			onConnection(nextConnection) {
+		onConnection(nextConnection) {
 				connection = nextConnection;
-				if (nextConnection.status === 'disconnected') {
+				if (nextConnection.status === 'disconnected' || nextConnection.status === 'reconnecting') {
 					freshness = 'unknown';
 					projectMessage = nextConnection.message;
 					history = invalidateStudioHistory();
+					auditState = auditRecords.length > 0 ? 'stale' : 'failed';
+				}
+				if (nextConnection.status === 'connected') {
+					if (auditSessionId !== nextConnection.sessionId) {
+						auditSessionId = nextConnection.sessionId;
+						auditRecords = [];
+						auditState = 'idle';
+					}
+					void refreshAudit();
 				}
 				if (nextConnection.status === 'failed') {
 					freshness = 'failed';
 					projectMessage = nextConnection.message;
 					history = invalidateStudioHistory();
+					auditState = 'failed';
 				}
 			},
 			onManifest(manifest) {
@@ -167,6 +224,7 @@
 			canvasObserver.observe(runtimeCanvasFrame, { childList: true, subtree: true });
 			runtimeCanvasFrame.addEventListener('click', selectCanvasNode, true);
 			runtimeCanvasFrame.addEventListener('keydown', selectCanvasNode, true);
+			runtimeCanvasFrame.addEventListener('focusin', containCanvasFocus, true);
 		}
 		hydrated = true;
 		return () => {
@@ -175,11 +233,13 @@
 			canvasObserver.disconnect();
 			runtimeCanvasFrame?.removeEventListener('click', selectCanvasNode, true);
 			runtimeCanvasFrame?.removeEventListener('keydown', selectCanvasNode, true);
+			runtimeCanvasFrame?.removeEventListener('focusin', containCanvasFocus, true);
 		};
 	});
 
 	async function loadDocument(document: R4StudioProjectDocument) {
 		const request = ++loadRequest;
+		const documentId = document.id;
 		freshness = snapshot ? 'refreshing' : 'loading';
 		projectMessage = freshness === 'refreshing' ? 'Refreshing the revision-qualified project snapshot.' : 'Loading the selected project source.';
 		selectedRef = null;
@@ -202,17 +262,42 @@
 			} else {
 				throw new Error('This project document requires the local Studio service.');
 			}
-			if (request !== loadRequest) return;
+			if (request !== loadRequest || selected?.id !== documentId) return;
+			if (
+				document.serviceId &&
+				(nextSnapshot.document.id !== document.serviceId || selected.revision !== nextSnapshot.document.revision)
+			) {
+				lastLoadKey = '';
+				freshness = 'refreshing';
+				projectMessage = 'The project manifest advanced while Studio loaded this source.';
+				return;
+			}
 			snapshot = nextSnapshot;
 			freshness = 'current';
 			projectMessage = 'The source snapshot matches the local project service.';
 			const firstNode = nextSnapshot.compilation.ir?.root[0];
 			if (firstNode) selectedRef = createStudioNodeRef(nextSnapshot, firstNode.id);
 		} catch (error) {
-			if (request !== loadRequest) return;
+			if (request !== loadRequest || selected?.id !== documentId) return;
 			freshness = connection.status === 'disconnected' ? 'unknown' : 'failed';
 			projectMessage = error instanceof Error ? error.message : 'The project source could not be loaded.';
 		}
+	}
+
+	function documentLoadKey(document: R4StudioProjectDocument): string {
+		const mode = connection.status === 'connected' && document.serviceId ? `service:${connection.sessionId}` : 'static';
+		return `${mode}:${document.serviceId ?? document.id}:${document.revision ?? document.preview?.source.length ?? 0}`;
+	}
+
+	function clearDocumentView(message: string) {
+		loadRequest += 1;
+		lastLoadKey = '';
+		snapshot = null;
+		selectedRef = null;
+		selectionOrigin = 'composition';
+		focusedRuntimeInstance = null;
+		freshness = connection.status === 'connected' ? 'loading' : 'unknown';
+		projectMessage = message;
 	}
 
 	function adoptManifest(manifest: Extract<R4StudioProjectResponse, { type: 'connected' }> | R4StudioProjectChange) {
@@ -242,15 +327,47 @@
 			projectMessage = 'The selected project document was deleted outside Studio.';
 		} else {
 			selectedId = nextDocuments[0]?.id ?? '';
+			tombstone = null;
 		}
 		if (connection.status === 'connected') connection = { ...connection, sequence: manifest.sequence };
 		const active = studioProjectDocument(selectedId, nextDocuments);
-		lastLoadKey = snapshot && active?.revision === snapshot.document.revision
-			? `service:${connection.status === 'connected' ? connection.sessionId : ''}:${active.serviceId ?? active.id}:${active.revision}`
-			: '';
+		if (
+			connection.status === 'connected' &&
+			snapshot &&
+			active?.serviceId === snapshot.document.id &&
+			active.revision === snapshot.document.revision
+		) {
+			freshness = 'current';
+			projectMessage = 'The source snapshot matches the local project service.';
+			lastLoadKey = documentLoadKey(active);
+		} else {
+			lastLoadKey = '';
+			if (!active && !tombstone) {
+				loadRequest += 1;
+				snapshot = null;
+				selectedRef = null;
+				selectionOrigin = 'composition';
+				focusedRuntimeInstance = null;
+				freshness = 'unknown';
+				projectMessage = 'No R4 project documents are available in this workspace.';
+			} else if (active?.serviceId && snapshot && snapshot.document.id !== active.serviceId) {
+				loadRequest += 1;
+				snapshot = null;
+				selectedRef = null;
+				selectionOrigin = 'composition';
+				focusedRuntimeInstance = null;
+				freshness = 'loading';
+				projectMessage = 'Loading the selected project source.';
+			}
+		}
 	}
 
 	function selectDocument(document: R4StudioProjectDocument, updateHistory = true) {
+		if (document.id !== selectedId) clearDocumentView(
+			connection.status === 'connected'
+				? 'Loading the selected project source.'
+				: 'The selected project source will load after the local service reconnects.'
+		);
 		selectedId = document.id;
 		requestedDocumentId = document.id;
 		tombstone = null;
@@ -265,6 +382,12 @@
 		window.history.pushState({}, '', url);
 	}
 
+	function retrySource() {
+		if (!selected) return;
+		lastLoadKey = documentLoadKey(selected);
+		void loadDocument(selected);
+	}
+
 	function selectNode(node: R4Node) {
 		if (!snapshot) return;
 		selectedRef = createStudioNodeRef(snapshot, node.id);
@@ -274,7 +397,6 @@
 
 	function selectCanvasNode(event: Event) {
 		if (canvasMode !== 'select' || !snapshot || !canvasPreview || snapshot.source !== canvasPreview.source) return;
-		if (event instanceof KeyboardEvent && event.key !== 'Enter' && event.key !== ' ') return;
 		const target = event.composedPath().find(
 			(candidate): candidate is HTMLElement =>
 				candidate instanceof HTMLElement &&
@@ -282,17 +404,79 @@
 				Boolean(candidate.dataset.r4StudioNode)
 		);
 		if (!target?.dataset.r4StudioNode) return;
+		if (event instanceof KeyboardEvent && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
+			const markers = canvasMarkers();
+			const current = canvasKeyboardMarker && markers.includes(canvasKeyboardMarker) ? canvasKeyboardMarker : target;
+			const index = markers.indexOf(current);
+			if (index < 0 || markers.length === 0) return;
+			event.preventDefault();
+			event.stopPropagation();
+			const delta = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : -1;
+			const next = markers[(index + delta + markers.length) % markers.length];
+			selectCanvasMarker(next);
+			next.focus();
+			return;
+		}
+		if (event instanceof KeyboardEvent && event.key !== 'Enter' && event.key !== ' ') return;
 		try {
 			event.preventDefault();
 			event.stopPropagation();
-			selectedRef = createStudioNodeRef(snapshot, target.dataset.r4StudioNode);
-			selectionOrigin = 'canvas';
-			focusedRuntimeInstance = target.dataset.r4StudioInstance
-				? { artifactId: canvasPreview.studioArtifactId, instanceId: target.dataset.r4StudioInstance }
-				: null;
+			selectCanvasMarker(target);
 		} catch {
 			mutationMessage = 'Canvas instrumentation belongs to another source revision and was ignored.';
 		}
+	}
+
+	function selectCanvasMarker(target: HTMLElement) {
+		if (!snapshot || !canvasPreview || !target.dataset.r4StudioNode) return;
+		canvasKeyboardMarker = target;
+		selectedRef = createStudioNodeRef(snapshot, target.dataset.r4StudioNode);
+		selectionOrigin = 'canvas';
+		focusedRuntimeInstance = target.dataset.r4StudioInstance
+			? { artifactId: canvasPreview.studioArtifactId, instanceId: target.dataset.r4StudioInstance }
+			: null;
+	}
+
+	function canvasMarkers(): HTMLElement[] {
+		if (!runtimeCanvasFrame || !canvasPreview) return [];
+		return [...runtimeCanvasFrame.querySelectorAll<HTMLElement>('[data-r4-studio-node]')].filter(
+			(element) => element.dataset.r4StudioArtifact === canvasPreview?.studioArtifactId
+		);
+	}
+
+	function updateCanvasTabStops(markers: HTMLElement[]) {
+		const controls = runtimeCanvasFrame
+			? [...runtimeCanvasFrame.querySelectorAll<HTMLElement>('a[href], button, input, select, textarea, [tabindex], [contenteditable="true"]')]
+			: [];
+		const managed = [...new Set([...markers, ...controls])];
+		if (canvasMode === 'interact') {
+			for (const element of managed) {
+				if (!canvasTabIndexes.has(element)) continue;
+				const original = canvasTabIndexes.get(element);
+				if (original === null) element.removeAttribute('tabindex');
+				else if (original !== undefined) element.setAttribute('tabindex', original);
+				canvasTabIndexes.delete(element);
+			}
+			return;
+		}
+		const focusableMarkers = markers.filter((marker) => !marker.matches(':disabled'));
+		const focused = document.activeElement instanceof HTMLElement && focusableMarkers.includes(document.activeElement)
+			? document.activeElement
+			: focusableMarkers.find((marker) => marker === canvasKeyboardMarker)
+				?? focusableMarkers.find((marker) => marker.dataset.r4StudioFocused === 'true')
+				?? focusableMarkers.find((marker) => marker.dataset.r4StudioSelected === 'true')
+				?? focusableMarkers[0];
+		for (const element of managed) {
+			if (!canvasTabIndexes.has(element)) canvasTabIndexes.set(element, element.getAttribute('tabindex'));
+			element.tabIndex = element === focused ? 0 : -1;
+		}
+	}
+
+	function containCanvasFocus(event: FocusEvent) {
+		if (canvasMode !== 'select' || !(event.target instanceof HTMLElement)) return;
+		if (canvasMarkers().includes(event.target)) return;
+		const marker = runtimeCanvasFrame?.querySelector<HTMLElement>('[data-r4-studio-node][tabindex="0"]');
+		if (marker && marker !== event.target) marker.focus();
 	}
 
 	function updateCanvasSelection() {
@@ -301,6 +485,17 @@
 			delete element.dataset.r4StudioSelected;
 			delete element.dataset.r4StudioFocused;
 		}
+		const markers = canvasMarkers();
+		if (canvasKeyboardMarker && !markers.includes(canvasKeyboardMarker)) canvasKeyboardMarker = null;
+		const mountedFocus = focusedRuntimeInstance;
+		if (
+			mountedFocus &&
+			!markers.some(
+				(marker) =>
+					marker.dataset.r4StudioArtifact === mountedFocus.artifactId &&
+					marker.dataset.r4StudioInstance === mountedFocus.instanceId
+			)
+		) focusedRuntimeInstance = null;
 		if (
 			!selectedRef ||
 			selectedRef.document.revision !== snapshot?.document.revision ||
@@ -309,17 +504,14 @@
 		) {
 			runtimeInstances = 0;
 			runtimeTargets = 0;
+			updateCanvasTabStops(markers);
 			return;
 		}
 
 		const instances = new Set<string>();
 		const targets = new Set<HTMLElement>();
-		const markers = [...runtimeCanvasFrame.querySelectorAll<HTMLElement>('[data-r4-studio-node]')].filter(
-			(element) =>
-				element.dataset.r4StudioArtifact === canvasPreview.studioArtifactId &&
-				element.dataset.r4StudioNode === selectedRef?.target.id
-		);
-		for (const marker of markers) {
+		const selectedMarkers = markers.filter((element) => element.dataset.r4StudioNode === selectedRef?.target.id);
+		for (const marker of selectedMarkers) {
 			const instanceId = marker.dataset.r4StudioInstance;
 			if (instanceId) instances.add(instanceId);
 			marker.dataset.r4StudioSelected = 'true';
@@ -332,28 +524,37 @@
 		}
 		runtimeInstances = instances.size;
 		runtimeTargets = targets.size;
+		updateCanvasTabStops(markers);
 	}
 
-	async function commitProperty(intent: R4StudioSetPropertyIntent) {
-		if (!projectClient || !selected?.serviceId || mutationPending) return;
+	async function commitIntent(intent: R4StudioEditIntent): Promise<MutationResponse | null> {
+		if (!projectClient || mutationPending) return null;
 		mutationPending = true;
 		pendingTransactionId = intent.id;
 		mutationMessage = '';
 		try {
-			const response = await projectClient.setProperty(selected.serviceId, intent);
+			const response = await projectClient.applyIntent(intent.target.document.id, intent);
+			const targetsSelectedDocument = selected?.serviceId === intent.target.document.id;
+			adoptAudit(response.audit);
 			if (response.type === 'mutation' && response.status === 'applied') {
-				adoptAppliedTransaction(response.applied);
-				history = recordStudioEdit(history, response.applied.undo);
-				mutationMessage = `${response.applied.undo.label.replace(/^Undo /, '')} applied.`;
+				const adopted = adoptAppliedTransaction(response.applied);
+				if (adopted) {
+					history = recordStudioEdit(history, response.applied.undo);
+					mutationMessage = `${response.applied.undo.label.replace(/^Undo /, '')} applied.`;
+				}
 			} else if (response.type === 'mutation') {
-				mutationMessage = 'The property already has that value.';
+				if (targetsSelectedDocument) mutationMessage = 'The property already has that value.';
 			} else if (response.type === 'conflict') {
-				adoptConflict(response.current);
+				if (targetsSelectedDocument) adoptConflict(response.current);
 			} else {
-				mutationMessage = response.reason;
+				if (targetsSelectedDocument) mutationMessage = response.reason;
 			}
+			return response;
 		} catch (error) {
-			mutationMessage = error instanceof Error ? error.message : 'The property edit failed.';
+			if (selected?.serviceId === intent.target.document.id) {
+				mutationMessage = error instanceof Error ? error.message : 'The Studio edit intent failed.';
+			}
+			return null;
 		} finally {
 			mutationPending = false;
 			pendingTransactionId = null;
@@ -363,34 +564,41 @@
 	async function undo() {
 		const transaction = history.undo.at(-1);
 		if (!transaction) return;
-		const applied = await applyHistoryTransaction(transaction);
+		const applied = await applyHistoryTransaction(transaction, 'undo');
 		if (applied) history = completeStudioUndo(history, applied.undo);
 	}
 
 	async function redo() {
 		const transaction = history.redo.at(-1);
 		if (!transaction) return;
-		const applied = await applyHistoryTransaction(transaction);
+		const applied = await applyHistoryTransaction(transaction, 'redo');
 		if (applied) history = completeStudioRedo(history, applied.undo);
 	}
 
-	async function applyHistoryTransaction(transaction: R4StudioSourceTransaction): Promise<R4StudioAppliedTransaction | null> {
-		if (!projectClient || !selected?.serviceId || mutationPending) return null;
+	async function applyHistoryTransaction(
+		transaction: R4StudioSourceTransaction,
+		direction: 'undo' | 'redo'
+	): Promise<R4StudioAppliedTransaction | null> {
+		if (!projectClient || mutationPending) return null;
+		const documentId = transaction.document.id;
 		mutationPending = true;
 		pendingTransactionId = transaction.id;
 		mutationMessage = '';
 		try {
-			const response = await projectClient.applyTransaction(selected.serviceId, transaction);
+			const response = await projectClient.applyHistory(documentId, transaction, direction);
+			adoptAudit(response.audit);
 			if (response.type === 'mutation' && response.status === 'applied') {
-				adoptAppliedTransaction(response.applied);
-				mutationMessage = `${transaction.label} applied.`;
-				return response.applied;
+				const adopted = adoptAppliedTransaction(response.applied);
+				if (adopted) mutationMessage = `${transaction.label} applied.`;
+				return adopted ? response.applied : null;
 			}
-			if (response.type === 'conflict') adoptConflict(response.current);
-			else mutationMessage = response.type === 'rejected' ? response.reason : 'The source already matches this history entry.';
+			if (response.type === 'conflict' && selected?.serviceId === documentId) adoptConflict(response.current);
+			else if (selected?.serviceId === documentId) mutationMessage = response.type === 'rejected' ? response.reason : 'The source already matches this history entry.';
 			return null;
 		} catch (error) {
-			mutationMessage = error instanceof Error ? error.message : 'The history transaction failed.';
+			if (selected?.serviceId === documentId) {
+				mutationMessage = error instanceof Error ? error.message : 'The history transaction failed.';
+			}
 			return null;
 		} finally {
 			mutationPending = false;
@@ -398,7 +606,38 @@
 		}
 	}
 
-	function adoptAppliedTransaction(applied: R4StudioAppliedTransaction) {
+	async function refreshAudit() {
+		if (!projectClient || connection.status !== 'connected') return;
+		const sessionId = connection.sessionId;
+		const request = ++auditRequest;
+		auditState = 'loading';
+		try {
+			const response = await projectClient.readAudit();
+			if (request === auditRequest && connection.status === 'connected' && connection.sessionId === sessionId) {
+				auditRecords = response.records;
+				auditState = 'ready';
+			}
+		} catch {
+			if (request === auditRequest) auditState = 'failed';
+		}
+	}
+
+	function adoptAudit(record: R4StudioAuditRecord) {
+		const currentSession = auditRecords[0]?.sessionId;
+		const records = currentSession && currentSession !== record.sessionId ? [] : auditRecords;
+		auditRecords = [...records.filter((candidate) => candidate.sequence !== record.sequence), record].slice(-100);
+		auditState = 'ready';
+	}
+
+	function adoptAppliedTransaction(applied: R4StudioAppliedTransaction): boolean {
+		const documentId = applied.snapshot.document.id;
+		if (connection.status === 'connected') {
+			documents = documents.map((document) =>
+				document.serviceId === documentId ? { ...document, revision: applied.snapshot.document.revision } : document
+			);
+		}
+		if (selected?.serviceId !== documentId) return false;
+		loadRequest += 1;
 		const previousNode = selectedNode;
 		snapshot = applied.snapshot;
 		freshness = 'current';
@@ -408,28 +647,28 @@
 			: applied.snapshot.compilation.ir?.root[0] ?? null;
 		selectedRef = nextNode ? createStudioNodeRef(applied.snapshot, nextNode.id) : null;
 		focusedRuntimeInstance = null;
-		if (selected?.serviceId && connection.status === 'connected') {
-			lastLoadKey = `service:${connection.sessionId}:${selected.serviceId}:${applied.snapshot.document.revision}`;
-			documents = documents.map((document) =>
-				document.serviceId === selected?.serviceId ? { ...document, revision: applied.snapshot.document.revision } : document
-			);
-		}
+		if (connection.status === 'connected') lastLoadKey = `service:${connection.sessionId}:${documentId}:${applied.snapshot.document.revision}`;
+		return true;
 	}
 
 	function adoptConflict(current: R4StudioSnapshot) {
+		const documentId = current.document.id;
+		if (connection.status === 'connected') {
+			documents = documents.map((document) =>
+				document.serviceId === documentId ? { ...document, revision: current.document.revision } : document
+			);
+		}
+		if (selected?.serviceId !== documentId) return;
+		loadRequest += 1;
 		snapshot = current;
 		freshness = 'current';
 		history = invalidateStudioHistory();
 		mutationMessage = 'The edit was rejected because the source changed outside Studio. The current source was reloaded.';
 		const firstNode = current.compilation.ir?.root[0];
 		selectedRef = firstNode ? createStudioNodeRef(current, firstNode.id) : null;
+		selectionOrigin = 'composition';
 		focusedRuntimeInstance = null;
-		if (selected?.serviceId && connection.status === 'connected') {
-			lastLoadKey = `service:${connection.sessionId}:${selected.serviceId}:${current.document.revision}`;
-			documents = documents.map((document) =>
-				document.serviceId === selected?.serviceId ? { ...document, revision: current.document.revision } : document
-			);
-		}
+		if (connection.status === 'connected') lastLoadKey = `service:${connection.sessionId}:${documentId}:${current.document.revision}`;
 	}
 
 	function findPlatformNode(nodes: PlatformPolicyNode[], id: string): PlatformPolicyNode | null {
@@ -439,6 +678,29 @@
 			if (child) return child;
 		}
 		return null;
+	}
+
+	function handleInspectorTabKeydown(event: KeyboardEvent, index: number) {
+		if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+		event.preventDefault();
+		const next = event.key === 'Home'
+			? 0
+			: event.key === 'End'
+				? inspectorViews.length - 1
+				: (index + (event.key === 'ArrowRight' ? 1 : -1) + inspectorViews.length) % inspectorViews.length;
+		inspectorView = inspectorViews[next].id;
+		const tabs = (event.currentTarget as HTMLButtonElement).parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]');
+		tabs?.[next]?.focus();
+	}
+
+	function retryConnection() {
+		void projectClient?.connect().catch(() => undefined);
+	}
+
+	function auditOriginLabel(record: R4StudioAuditRecord): string {
+		if (record.origin.type === 'history') return record.origin.direction;
+		if (record.origin.type === 'automation') return record.origin.runId ? `automation / ${record.origin.runId}` : 'automation';
+		return record.origin.type;
 	}
 
 	function nodeLabel(node: R4Node | null) {
@@ -453,6 +715,7 @@
 	function connectionLabel() {
 		if (connection.status === 'connected') return 'Local service connected';
 		if (connection.status === 'connecting') return 'Connecting local service';
+		if (connection.status === 'reconnecting') return 'Reconciling local service';
 		if (connection.status === 'disconnected') return 'Local service disconnected';
 		if (connection.status === 'failed') return 'Local service failed';
 		return 'Static project snapshot';
@@ -467,7 +730,7 @@
 		</a>
 		<div class="project-identity">
 			<span>Project</span>
-			<strong>{connection.status === 'connected' ? connection.workspace.name : 'R4 framework repository'}</strong>
+			<strong>{'workspace' in connection && connection.workspace ? connection.workspace.name : 'R4 framework repository'}</strong>
 			<small>{documents.length} analyzed documents / {connectionLabel()}</small>
 		</div>
 		<div class="platform-switcher" role="group" aria-label="Target platform">
@@ -524,10 +787,15 @@
 				<code>{selected?.path}</code>
 				<strong>{connectionLabel()}</strong>
 				<small>{projectMessage}</small>
+				{#if connection.status === 'disconnected' || connection.status === 'failed'}
+					<button type="button" onclick={retryConnection}>Retry connection</button>
+				{:else if connection.status === 'connected' && freshness === 'failed'}
+					<button type="button" onclick={retrySource}>Retry source</button>
+				{/if}
 			</div>
 		</header>
 
-		<section class="runtime-section" aria-label="Application runtime">
+		<section class="runtime-section" aria-label="Application runtime" aria-busy={freshness === 'loading' || freshness === 'refreshing'}>
 			<header class="runtime-toolbar">
 				<div class="runtime-state" data-mode={platform === 'web' && canvasPreview ? 'actual' : 'simulated'}>
 					<span aria-hidden="true"></span>
@@ -548,6 +816,21 @@
 					<strong>{errorCount}</strong><span>errors</span><strong>{warningCount}</strong><span>warnings</span>
 				</div>
 			</header>
+			{#if snapshot && selectedRef && selectionOrigin === 'canvas'}
+				<details class="canvas-properties">
+					<summary>Canvas properties <span>{runtimeInstances > 1 ? `Edits all ${runtimeInstances} instances` : 'Edits authored source'}</span></summary>
+					<div>
+						<StudioPropertiesInspector
+							{snapshot}
+							{selectedRef}
+							disabled={!editingEnabled || mutationPending}
+							disabledReason={editingDisabledReason}
+							origin={{ type: 'canvas', runtimeInstance: focusedRuntimeInstance ?? undefined }}
+							oncommit={commitIntent}
+						/>
+					</div>
+				</details>
+			{/if}
 			<div class="runtime-field" data-platform={platform}>
 				<div class="runtime-frame" data-r4-platform={platform}>
 					<div class="runtime-chrome">
@@ -582,23 +865,34 @@
 			</div>
 		</header>
 		<div class="inspector-tabs" role="tablist" aria-label="Project inspector view">
-			{#each inspectorViews as view}
+			{#each inspectorViews as view, index}
 				<button
 					type="button"
 					role="tab"
+					id={`inspector-tab-${view.id}`}
+					aria-controls="inspector-panel"
 					aria-selected={inspectorView === view.id}
+					tabindex={inspectorView === view.id ? 0 : -1}
 					class:active={inspectorView === view.id}
 					onclick={() => (inspectorView = view.id)}
-				>{view.label}{#if view.id === 'diagnostics'}<span>{diagnostics.length}</span>{/if}</button>
+					onkeydown={(event) => handleInspectorTabKeydown(event, index)}
+				>{view.label}{#if view.id === 'diagnostics'}<span>{diagnostics.length}</span>{:else if view.id === 'audit'}<span>{auditRecords.length}</span>{/if}</button>
 			{/each}
 		</div>
-		<div class="inspector-content" role="tabpanel">
-			{#if mutationMessage}<div class="mutation-message" aria-live="polite">{mutationMessage}</div>{/if}
+		<div id="inspector-panel" class="inspector-content" role="tabpanel" tabindex="0" aria-labelledby={`inspector-tab-${inspectorView}`} aria-busy={mutationPending}>
+			<div class="mutation-message" class:empty={!mutationMessage} role="status" aria-live="polite" aria-atomic="true">{mutationMessage}</div>
 			{#if inspectorView === 'composition'}
 				<CompositionTree {ir} selectedNodeId={selectedNode?.id} onselect={selectNode} />
 			{:else if inspectorView === 'properties'}
 				{#if snapshot && selectedRef}
-					<StudioPropertiesInspector {snapshot} {selectedRef} disabled={!editingEnabled || mutationPending} oncommit={commitProperty} />
+					<StudioPropertiesInspector
+						{snapshot}
+						{selectedRef}
+						disabled={!editingEnabled || mutationPending}
+						disabledReason={editingDisabledReason}
+						origin={{ type: 'inspector' }}
+						oncommit={commitIntent}
+					/>
 				{:else}
 					<div class="inspector-empty"><strong>No selection</strong><span>Select a semantic primitive before editing properties.</span></div>
 				{/if}
@@ -609,7 +903,7 @@
 			{:else if inspectorView === 'platform'}
 				<div class="projection-summary"><span>{projection?.mode}</span><strong>{projection?.renderer}</strong></div>
 				<pre aria-label="Selected Platform IR">{JSON.stringify(selectedPlatformNode ?? projection, null, 2)}</pre>
-			{:else}
+			{:else if inspectorView === 'diagnostics'}
 				{#if platform === 'ios' || platform === 'android'}
 					<div class="projection-summary"><span>Lynx prototype backend</span><strong>simulated</strong></div>
 				{:else if platform !== 'web'}
@@ -623,6 +917,28 @@
 							<li data-severity={diagnostic.severity}><div><strong>{diagnostic.code}</strong><span>{diagnostic.severity}</span></div><p>{diagnostic.message}</p></li>
 						{/each}
 					</ul>
+				{/if}
+			{:else}
+				{#if connection.status === 'static'}
+					<div class="inspector-empty"><strong>No local audit session</strong><span>Mutation audit records exist only in the loopback project service.</span></div>
+				{:else if connection.status !== 'connected'}
+					<div class="inspector-empty"><strong>Audit unavailable</strong><span>Reconnect the local project service before reading the session journal.</span></div>
+				{:else if auditState === 'failed'}
+					<div class="inspector-empty"><strong>Audit unavailable</strong><span>The journal could not be refreshed; existing records may be stale.</span><button type="button" onclick={refreshAudit}>Retry audit</button></div>
+				{:else if auditState === 'loading' && auditRecords.length === 0}
+					<div class="inspector-empty"><strong>Loading audit</strong><span>Reading the bounded journal from the local project service.</span></div>
+				{:else if auditRecords.length === 0}
+					<div class="inspector-empty"><strong>No mutations recorded</strong><span>This bounded session journal records outcomes without source or property values.</span></div>
+				{:else}
+					<ol class="audit-list" aria-label="Studio mutation audit">
+						{#each [...auditRecords].reverse() as record (record.sequence)}
+							<li data-outcome={record.outcome}>
+								<div><strong>{record.operation}</strong><span>{record.outcome}</span></div>
+								<code>#{record.sequence} / {auditOriginLabel(record)} / {record.documentId}</code>
+								<small>{record.code} / {record.resultRevision?.slice(0, 10) ?? record.beforeRevision?.slice(0, 10) ?? '--'}</small>
+							</li>
+						{/each}
+					</ol>
 				{/if}
 			{/if}
 		</div>
@@ -963,6 +1279,15 @@
 		color: #b42318;
 	}
 
+	.document-state button {
+		border: 1px solid #8c918f;
+		background: #f7f6f1;
+		padding: 4px 7px;
+		color: #005bd7;
+		font: 0.52rem/1 var(--r4-font-mono);
+		cursor: pointer;
+	}
+
 	.runtime-section {
 		margin: 22px;
 		border: 1px solid #93938d;
@@ -1059,6 +1384,36 @@
 	.canvas-mode button.active {
 		background: #171b1e;
 		color: white;
+	}
+
+	.canvas-properties {
+		border-bottom: 1px solid #93938d;
+		background: #202528;
+		color: #e8e9e7;
+	}
+
+	.canvas-properties summary {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		padding: 8px 12px;
+		font-size: 0.65rem;
+		font-weight: 650;
+		cursor: pointer;
+	}
+
+	.canvas-properties summary span {
+		color: #8fa0a5;
+		font: 0.52rem/1 var(--r4-font-mono);
+		font-weight: 400;
+	}
+
+	.canvas-properties > div {
+		max-height: 260px;
+		overflow: auto;
+		border-top: 1px solid #3a4145;
+		padding: 10px;
 	}
 
 	.runtime-diagnostics strong {
@@ -1222,6 +1577,12 @@
 		font: 0.56rem/1.45 var(--r4-font-mono);
 	}
 
+	.mutation-message.empty {
+		min-height: 0;
+		border: 0;
+		padding: 0;
+	}
+
 	.inspector-tabs {
 		display: flex;
 		overflow-x: auto;
@@ -1257,6 +1618,11 @@
 		overflow: auto;
 	}
 
+	.inspector-content:focus-visible {
+		outline: 2px solid #70b3f2;
+		outline-offset: -2px;
+	}
+
 	.inspector-content > pre {
 		min-height: 100%;
 		margin: 0;
@@ -1265,6 +1631,53 @@
 		font: 0.66rem/1.55 var(--r4-font-mono);
 		white-space: pre-wrap;
 		word-break: break-word;
+	}
+
+	.audit-list {
+		display: grid;
+		gap: 8px;
+		margin: 0;
+		padding: 12px;
+		list-style: none;
+	}
+
+	.audit-list li {
+		display: grid;
+		min-width: 0;
+		gap: 7px;
+		border: 1px solid #3a4145;
+		background: #171c1f;
+		padding: 10px;
+	}
+
+	.audit-list li > div {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 10px;
+	}
+
+	.audit-list strong {
+		font-size: 0.68rem;
+		text-transform: capitalize;
+	}
+
+	.audit-list span,
+	.audit-list code,
+	.audit-list small {
+		min-width: 0;
+		overflow-wrap: anywhere;
+		color: #8f9a9e;
+		font: 0.54rem/1.45 var(--r4-font-mono);
+	}
+
+	.audit-list li[data-outcome='applied'] span {
+		color: #6fcf97;
+	}
+
+	.audit-list li[data-outcome='conflict'] span,
+	.audit-list li[data-outcome='rejected'] span {
+		color: #ff9288;
 	}
 
 	.projection-summary {
@@ -1341,6 +1754,15 @@
 		max-width: 280px;
 		color: #869095;
 		font: 0.62rem/1.5 var(--r4-font-mono);
+	}
+
+	.inspector-empty button {
+		border: 1px solid #4b555a;
+		background: #26323a;
+		padding: 7px 10px;
+		color: #dbe9f6;
+		font-size: 0.6rem;
+		cursor: pointer;
 	}
 
 	@media (max-width: 1180px) {

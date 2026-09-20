@@ -97,6 +97,19 @@
 		}
 	}
 
+	function handleAnalysisTabKeydown(event: KeyboardEvent, index: number) {
+		if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+		event.preventDefault();
+		const next = event.key === 'Home'
+			? 0
+			: event.key === 'End'
+				? views.length - 1
+				: (index + (event.key === 'ArrowRight' ? 1 : -1) + views.length) % views.length;
+		activeView = views[next].id;
+		const tabs = (event.currentTarget as HTMLButtonElement).parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]');
+		tabs?.[next]?.focus();
+	}
+
 	function diagnosticLocation(diagnostic: R4Diagnostic) {
 		return diagnostic.range ? `${diagnostic.range.start.line}:${diagnostic.range.start.column + 1}` : 'project';
 	}
@@ -157,19 +170,22 @@
 			</div>
 
 			<div class="analysis-tabs" role="tablist" aria-label="Analysis view">
-				{#each views as view}
+				{#each views as view, index}
 					<button
 						type="button"
 						role="tab"
+						id={`analysis-tab-${view.id}`}
 						aria-selected={activeView === view.id}
 						aria-controls="analysis-content"
+						tabindex={activeView === view.id ? 0 : -1}
 						class:active={activeView === view.id}
 						onclick={() => (activeView = view.id)}
+						onkeydown={(event) => handleAnalysisTabKeydown(event, index)}
 					>{view.label}{#if view.id === 'diagnostics'}<span>{diagnostics.length}</span>{/if}</button>
 				{/each}
 			</div>
 
-			<div id="analysis-content" class="analysis-content" role="tabpanel">
+			<div id="analysis-content" class="analysis-content" role="tabpanel" tabindex="0" aria-labelledby={`analysis-tab-${activeView}`} aria-busy={studioState === 'analyzing'}>
 				{#if failure}
 					<div class="failure"><strong>Compiler worker failure</strong><p>{failure}</p></div>
 				{:else if !snapshot}
@@ -543,6 +559,11 @@
 	.analysis-content {
 		min-height: 0;
 		overflow: auto;
+	}
+
+	.analysis-content:focus-visible {
+		outline: 2px solid #70b3f2;
+		outline-offset: -2px;
 	}
 
 	pre {

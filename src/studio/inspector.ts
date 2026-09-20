@@ -1,10 +1,9 @@
 import { parse } from 'svelte/compiler';
 import type { R4StudioNodeCapabilities, R4StudioSourceTransaction } from './contracts.js';
 import { assertSupportedStudioCompilerProfile } from './compiler-profile.js';
+import type { R4StudioEditIntent, R4StudioStaticPropertyValue } from './intents.js';
 import { resolveStudioNode } from './selection.js';
 import type { R4StudioNodeRef, R4StudioSnapshot } from './types.js';
-
-export type R4StudioStaticPropertyValue = string | number | boolean;
 
 export interface R4StudioOffsetRange {
 	start: number;
@@ -26,7 +25,7 @@ export interface R4StudioEditableProperty {
 	anchor: R4StudioAttributeAnchor;
 }
 
-export interface R4StudioSetPropertyIntent {
+export interface R4StudioSetPropertyRequest {
 	id: string;
 	target: R4StudioNodeRef;
 	property: string;
@@ -79,7 +78,7 @@ export function studioNodeCapabilities(snapshot: R4StudioSnapshot, ref: R4Studio
 
 export function planStudioSetProperty(
 	snapshot: R4StudioSnapshot,
-	intent: R4StudioSetPropertyIntent
+	intent: R4StudioSetPropertyRequest
 ): R4StudioSetPropertyPlan {
 	if (
 		intent.target.document.id !== snapshot.document.id ||
@@ -125,6 +124,15 @@ export function planStudioSetProperty(
 			edits: [{ start: property.anchor.edit.start, end: property.anchor.edit.end, replacement }]
 		}
 	};
+}
+
+export function planStudioEditIntent(snapshot: R4StudioSnapshot, intent: R4StudioEditIntent): R4StudioSetPropertyPlan {
+	return planStudioSetProperty(snapshot, {
+		id: intent.id,
+		target: intent.target,
+		property: intent.operation.property,
+		value: intent.operation.value
+	});
 }
 
 function inspectAttribute(
