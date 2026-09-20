@@ -203,5 +203,5 @@ export type PrimitiveName = keyof typeof primitiveManifest;
 export type PrimitiveDomain = (typeof primitiveManifest)[PrimitiveName]['domain'];
 
 export function isPrimitiveName(value: string): value is PrimitiveName {
-	return value in primitiveManifest;
+	return Object.prototype.hasOwnProperty.call(primitiveManifest, value);
 }

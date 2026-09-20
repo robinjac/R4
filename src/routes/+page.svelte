@@ -48,6 +48,10 @@
 			.filter((experiment) => experiment.kind === 'primitive' && isPrimitiveName(experiment.title))
 			.map((experiment) => [experiment.title as PrimitiveName, experiment] as const)
 	);
+	const missingPrimitiveSpecimens = primitiveCatalog.filter((primitive) => !primitiveExperiments.has(primitive.name));
+	if (missingPrimitiveSpecimens.length > 0) {
+		throw new Error(`Missing primitive specimens: ${missingPrimitiveSpecimens.map((primitive) => primitive.name).join(', ')}`);
+	}
 	const defaultPrimitive: PrimitiveName = primitiveCatalog[0]?.name ?? 'View';
 	const defaultExperiment = primitiveExperiments.get(defaultPrimitive);
 	let hydrated = $state(false);

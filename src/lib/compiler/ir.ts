@@ -7,13 +7,18 @@ export type DiagnosticSeverity = 'error' | 'warning' | 'info';
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
 export interface SourcePosition {
+	/** One-based authored-source line number. */
 	line: number;
+	/** Zero-based UTF-16 code-unit column. */
 	column: number;
+	/** Zero-based UTF-16 code-unit offset in the exact compiler input. */
 	offset: number;
 }
 
 export interface SourceRange {
+	/** Inclusive start position. */
 	start: SourcePosition;
+	/** Exclusive end position. */
 	end: SourcePosition;
 }
 

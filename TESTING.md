@@ -24,38 +24,55 @@ bun run verify
 
 This must complete all of the following:
 
-- 14+ compiler/backend unit tests;
+- 25+ compiler, backend, and Studio contract unit tests;
 - Svelte and TypeScript checks with zero errors and warnings;
 - a static SvelteKit build plus package generation and `publint`;
 - a real Rspeedy Lynx bundle at `native/lynx/dist/main.lynx.bundle`;
-- Playwright Workbench tests in Chromium.
+- Playwright Studio and Workbench tests in Chromium.
 
 Rspeedy may print a non-fatal Node `MaxListenersExceededWarning`. The build is accepted only when it
 still exits successfully and reports the generated bundle.
 
-## Browser acceptance
+## Studio browser acceptance
 
-Start the Workbench:
+Start Studio:
 
 ```sh
 bun run dev
 ```
 
+Open `http://localhost:3000/studio/` and verify:
+
+1. The title is `R4 Studio` and the browser compiler reaches `Portable subset`.
+2. The source editor contains an ordinary R4/Svelte document imported from `r4`.
+3. Diagnostics, Semantic IR, Svelte AST, and Snapshot views represent the same revision.
+4. Replacing Button with another primitive and selecting Analyze updates the Semantic IR.
+5. Invalid Svelte source remains in the editor and produces a source-located diagnostic.
+6. The Workbench link opens `/`.
+7. The browser console has no uncaught errors.
+
+Studio analyzes drafts but does not execute or write them during Phase 0.
+
+## Workbench browser acceptance
+
+Start the Workbench directly:
+
+```sh
+bun run workbench
+```
+
 Open `http://localhost:3000` and verify:
 
-1. The title is `R4 Workbench` and there is one main document landmark.
-2. `Targeted reactivity` starts at count `0` and derived value `0`.
-3. `Increment count` changes those values to `1` and `2` without a page reload.
-4. Source, AST, Semantic IR, Platform IR, Output, and Diagnostics controls update the inspector.
-5. Web, iOS, Android, macOS, and Windows controls update the preview frame and selected state.
-6. `Adaptive grid` renders three cards on the web; its native unsupported diagnostics are expected.
-7. `Interactive View` toggles between Closed and Open; its semantic and Lynx diagnostics are expected.
-8. The browser console has no uncaught errors.
+1. The title is `R4 Workbench` and the primitive index contains all 33 manifest primitives.
+2. Selecting a primitive updates Preview, Source, Composition, AST, Semantic IR, Output, and Diagnostics.
+3. `?entry=counter-reactivity` runs state and derived-state updates without a page reload.
+4. Web, iOS, Android, macOS, and Windows controls update the selected policy profile.
+5. Hidden application and diagnostic fixtures remain available through direct `?entry=` links.
+6. The browser console has no uncaught errors.
 
-Repeat at 390 x 844 and 1280 x 800 viewport sizes. Confirm that navigation remains reachable, the
-preview can scroll, and the page itself has no horizontal overflow. Using only the keyboard, confirm
-that every Workbench button receives a visible focus indicator and can be activated with Enter or
-Space.
+Repeat Studio and Workbench acceptance at 390 x 844 and 1280 x 800 viewport sizes. Confirm there is
+no horizontal page overflow. Using only the keyboard, confirm controls receive visible focus and can
+be activated with Enter or Space.
 
 ## Static build acceptance
 
@@ -66,7 +83,8 @@ bun run build
 bun run preview
 ```
 
-Open `http://localhost:4173` and repeat the counter test. The static site is written to `build/`.
+Open `http://localhost:4173/studio/` and `http://localhost:4173/` and repeat the Studio analysis and
+Workbench primitive-selection tests. The static site is written to `build/`.
 
 ## Native Lynx acceptance
 

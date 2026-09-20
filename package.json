@@ -9,8 +9,9 @@
 		"node": "^20.19.0 || >=22.12.0"
 	},
 	"scripts": {
-		"dev": "vite dev",
-		"start": "vite dev",
+		"dev": "vite dev --open /studio/",
+		"start": "vite dev --open /studio/",
+		"workbench": "vite dev --open /",
 		"build": "vite build && npm run prepack",
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",

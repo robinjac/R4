@@ -119,7 +119,7 @@ export function compileR4(source: string, options: CompileR4Options = {}): R4Com
 				code: `svelte/${warning.code}`,
 				severity: 'warning',
 				message: warning.message,
-				range: compilerRange(warning.start, warning.end)
+				range: compilerRange(warning.start, warning.end, source)
 			});
 		}
 	} catch (error) {
@@ -133,7 +133,7 @@ export function compileR4(source: string, options: CompileR4Options = {}): R4Com
 			code: `svelte/${diagnostic.code ?? 'compile-error'}`,
 			severity: 'error',
 			message: diagnostic.message ?? String(error),
-			range: compilerRange(diagnostic.start, diagnostic.end)
+			range: compilerRange(diagnostic.start, diagnostic.end, source)
 		});
 		return { ir: null, diagnostics, ast: null };
 	}
@@ -1058,12 +1058,16 @@ function position(offset: number, context: CompilerContext): SourcePosition {
 
 function compilerRange(
 	start?: { line: number; column: number; character?: number },
-	end?: { line: number; column: number; character?: number }
+	end?: { line: number; column: number; character?: number },
+	source = ''
 ): SourceRange | undefined {
 	if (!start || !end) return undefined;
+	const lineStarts = getLineStarts(source);
+	const offset = (position: { line: number; column: number; character?: number }) =>
+		position.character ?? (lineStarts[position.line - 1] ?? 0) + position.column;
 	return {
-		start: { line: start.line, column: start.column, offset: start.character ?? 0 },
-		end: { line: end.line, column: end.column, offset: end.character ?? start.character ?? 0 }
+		start: { line: start.line, column: start.column, offset: offset(start) },
+		end: { line: end.line, column: end.column, offset: offset(end) }
 	};
 }
 

@@ -53,8 +53,10 @@ binding analysis in the public AST, so v0.1 performs a narrow source-level depen
 known R4 state, derived state, props, handlers, and template expressions. The resulting IR records
 explicit update edges instead of requiring runtime virtual-tree diffing.
 
-The Vite plugin in `tools/r4-vite.ts` compiles `?r4-ir` imports at build time. Compiler code is not
-shipped to the browser.
+The Vite plugin in `tools/r4-vite.ts` compiles trusted Workbench `?r4-ir` imports at build time. The
+Studio route separately loads the same browser-safe compiler core in a lazy module worker. Studio
+source is analyzed with Svelte `generate: false`; it is not evaluated or imported as executable
+JavaScript.
 
 ### Semantic IR
 
@@ -63,7 +65,7 @@ IR v1 is defined in `src/lib/compiler/ir.ts`. It contains:
 - version and source metadata;
 - semantic element domains and intent;
 - normalized semantic props such as `activation`, `destination`, and `alternative`;
-- source ranges and stable compilation-local node IDs;
+- source ranges and unique compilation-local node IDs;
 - literal, expression, template, and handler values;
 - state, derived state, props, constants, and effects;
 - dependency-directed update edges;
@@ -72,6 +74,10 @@ IR v1 is defined in `src/lib/compiler/ir.ts`. It contains:
 - `if` and experimental `each` control nodes.
 
 The IR does not contain DOM nodes, React elements, Lynx elements, Swift views, or Android views.
+
+Source ranges refer to the exact compiler input. Lines are one-based, columns and offsets are
+zero-based UTF-16 code units, and end positions are exclusive. Node IDs are opaque and valid only for
+one compilation snapshot; Studio combines them with a logical document ID and source revision.
 
 ### Platform policy
 
@@ -113,6 +119,19 @@ The Workbench currently supplies the first slices of API Lab, Layout Lab, Platfo
 Inspector, and Accessibility Lab. Its architecture can add real host/device sessions and performance
 telemetry without replacing the experiment format.
 
+### Studio
+
+`src/studio` contains private browser-development infrastructure. `/studio/` currently proves the
+source-analysis boundary with an in-memory R4/Svelte editor, lazy compiler worker, diagnostics,
+syntax outline, Semantic IR, and a revision-qualified snapshot.
+
+`r4.studio.snapshot` v1 and the selection helpers ensure semantic node references cannot cross source
+revisions. Source transaction v1 defines atomic text edits, stale-revision rejection, and generated
+undo transactions before Canvas or AI mutation is enabled. The versioned runtime message contract
+keeps disconnected, simulated, and actual execution states explicit.
+
+See `STUDIO.md` for the complete Phase 0 boundary and deferred capabilities.
+
 ## Portable subset
 
 v0.1 supports:
@@ -150,6 +169,7 @@ HTML, browser URLs, keyboard behavior, and Svelte's targeted client updates.
 - No virtual DOM added above Svelte or native backends.
 - No claim that browser device frames equal real native execution.
 - No R4 Host, native capability ABI, navigation runtime, or production native build yet.
+- No Studio project service, filesystem mutation, or execution of in-memory drafts yet.
 - No complete Svelte language lowering for native targets.
 - No renderer mixing or GPU surface implementation yet; the semantic element model leaves room for
   future renderer requirements without exposing renderer brands in application code.

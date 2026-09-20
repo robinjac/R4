@@ -18,6 +18,7 @@ This repository is intentionally a vertical slice, not a complete framework.
 - State, derived-state, template dependency, mutation, effect, and targeted-update representation.
 - Browser Workbench discovery of real `src/research/**/*.r4.svelte` experiments.
 - Source, Svelte AST, Semantic IR, platform policy, generated output, and diagnostic inspection.
+- A browser-first Studio analyzer with revision-qualified source, AST, IR, and diagnostics snapshots.
 - Clearly labeled Web, iOS, Android, macOS, and Windows browser preview modes.
 - A replaceable Lynx backend that lowers IR, generates an internal ReactLynx implementation, and
   produces a real Lynx bundle with Rspeedy.
@@ -27,6 +28,7 @@ This repository is intentionally a vertical slice, not a complete framework.
 ```sh
 bun install
 bun run dev
+bun run workbench
 bun test
 bun run check
 bun run build
@@ -34,6 +36,10 @@ bun run test:e2e
 bun run native:build
 bun run verify
 ```
+
+`bun run dev` opens the Phase 0 Studio at `http://localhost:3000/studio/`. It analyzes in-memory R4
+source in a browser worker and does not execute or write the draft. `bun run workbench` opens the
+primitive Workbench at `http://localhost:3000/`.
 
 `bun run native:build` writes `native/lynx/dist/main.lynx.bundle`. Load it with Lynx Explorer or an
 embedded LynxView that uses a compatible engine.
@@ -60,5 +66,5 @@ discovers its component, raw source, compiler artifact, and Lynx projection auto
 </Stack>
 ```
 
-See [ARCHITECTURE.md](./ARCHITECTURE.md) for boundaries, current constraints, and next research
-questions.
+See [ARCHITECTURE.md](./ARCHITECTURE.md) for framework boundaries and [STUDIO.md](./STUDIO.md) for the
+Studio Phase 0 contracts and next phase.

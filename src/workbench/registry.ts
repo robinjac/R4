@@ -55,6 +55,18 @@ export const experiments: WorkbenchExperiment[] = Object.entries(componentModule
 		return groupDifference || left.title.localeCompare(right.title);
 	});
 
+const experimentIds = new Set<string>();
+for (const experiment of experiments) {
+	if (experimentIds.has(experiment.id)) throw new Error(`Duplicate Workbench experiment id: ${experiment.id}`);
+	experimentIds.add(experiment.id);
+}
+
+for (const path of Object.keys(componentModules)) {
+	if (!(path in sourceModules) || !(path in compilationModules) || !(path in highlightingModules)) {
+		throw new Error(`Incomplete Workbench artifacts for ${path}`);
+	}
+}
+
 function kindFromPath(path: string): WorkbenchEntryKind {
 	if (path.includes('/primitives/')) return 'primitive';
 	if (path.includes('/compositions/')) return 'composition';
