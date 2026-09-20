@@ -36,7 +36,28 @@ const supportedProps: Record<PrimitiveName, Set<string>> = {
 	Image: new Set(['source', 'alternative', 'width', 'height', 'fit', 'loading']),
 	Icon: new Set(['name', 'accessibilityLabel', 'size']),
 	Button: new Set(['activation', 'disabled', 'emphasis', 'type', 'accessibilityLabel']),
-	Input: new Set(['change', 'label', 'value', 'placeholder', 'type', 'disabled', 'description']),
+	Input: new Set(['change', 'label', 'value', 'placeholder', 'type', 'disabled', 'readonly', 'required', 'description', 'error', 'name']),
+	Switch: new Set(['change', 'label', 'checked', 'disabled', 'required', 'description', 'error', 'name']),
+	Navigation: new Set(['accessibilityLabel', 'placement']),
+	NavigationItem: new Set(['selection', 'accessibilityLabel', 'selected', 'disabled']),
+	List: new Set(['accessibilityLabel', 'dividers']),
+	ListItem: new Set(['selection', 'accessibilityLabel', 'selected', 'disabled']),
+	Feed: new Set(['accessibilityLabel', 'live']),
+	FeedItem: new Set(['author', 'align', 'status']),
+	Badge: new Set(['tone', 'accessibilityLabel']),
+	Tabs: new Set(['accessibilityLabel']),
+	Tab: new Set(['selection', 'accessibilityLabel', 'selected', 'disabled']),
+	Form: new Set(['submission', 'accessibilityLabel']),
+	Textarea: new Set(['change', 'label', 'value', 'placeholder', 'description', 'error', 'name', 'rows', 'required', 'disabled', 'readonly']),
+	NumberInput: new Set(['change', 'label', 'value', 'placeholder', 'description', 'error', 'name', 'min', 'max', 'step', 'unit', 'required', 'disabled', 'readonly']),
+	Select: new Set(['change', 'label', 'options', 'value', 'placeholder', 'description', 'error', 'name', 'required', 'disabled']),
+	Checkbox: new Set(['change', 'label', 'checked', 'description', 'error', 'name', 'required', 'disabled']),
+	DateInput: new Set(['change', 'label', 'value', 'description', 'error', 'name', 'min', 'max', 'required', 'disabled']),
+	TimeInput: new Set(['change', 'label', 'value', 'description', 'error', 'name', 'min', 'max', 'step', 'required', 'disabled']),
+	Alert: new Set(['title', 'tone']),
+	Progress: new Set(['label', 'value', 'max']),
+	Sheet: new Set(['title', 'description', 'open', 'dismissal']),
+	RichText: new Set(['accessibilityLabel']),
 	Page: new Set(['title', 'description', 'padding', 'background']),
 	Scroll: new Set(['direction', 'accessibilityLabel']),
 	Link: new Set(['destination', 'external', 'accessibilityLabel'])
@@ -196,6 +217,14 @@ function emitNode(node: R4Node, context: EmitContext, depth: number, inheritedTe
 		});
 		return `${tabs(depth)}<view />`;
 	}
+	if (node.kind === 'component') {
+		context.diagnostics.push({
+			code: 'r4/lynx-composition-unsupported',
+			severity: 'error',
+			message: `Composition ${node.name} from ${node.source} must be resolved before Lynx lowering.`
+		});
+		return `${tabs(depth)}<view />`;
+	}
 	return emitElement(node, context, depth, inheritedTextColor);
 }
 
@@ -309,7 +338,28 @@ function validateElement(node: R4ElementNode, context: EmitContext) {
 		Grid: 'Grid has no verified Lynx layout policy in the v0.1 adapter.',
 		Layer: 'Layer overlap semantics are not implemented by the v0.1 Lynx adapter.',
 		Icon: 'Icon assets are not implemented by the v0.1 Lynx adapter.',
-		Input: 'Input value and change semantics are not implemented by the v0.1 Lynx adapter.'
+		Input: 'Input value and change semantics are not implemented by the v0.1 Lynx adapter.',
+		Switch: 'Switch state and change semantics are not implemented by the v0.1 Lynx adapter.',
+		Navigation: 'Adaptive navigation semantics are not implemented by the v0.1 Lynx adapter.',
+		NavigationItem: 'Navigation selection semantics are not implemented by the v0.1 Lynx adapter.',
+		List: 'List collection semantics are not implemented by the v0.1 Lynx adapter.',
+		ListItem: 'List item semantics are not implemented by the v0.1 Lynx adapter.',
+		Feed: 'Live feed semantics are not implemented by the v0.1 Lynx adapter.',
+		FeedItem: 'Feed item semantics are not implemented by the v0.1 Lynx adapter.',
+		Badge: 'Status badge semantics are not implemented by the v0.1 Lynx adapter.',
+		Tabs: 'Tab-set semantics are not implemented by the v0.1 Lynx adapter.',
+		Tab: 'Tab selection semantics are not implemented by the v0.1 Lynx adapter.',
+		Form: 'Form submission semantics are not implemented by the v0.1 Lynx adapter.',
+		Textarea: 'Multiline input semantics are not implemented by the v0.1 Lynx adapter.',
+		NumberInput: 'Numeric input semantics are not implemented by the v0.1 Lynx adapter.',
+		Select: 'Selection control semantics are not implemented by the v0.1 Lynx adapter.',
+		Checkbox: 'Checkbox semantics are not implemented by the v0.1 Lynx adapter.',
+		DateInput: 'Date input semantics are not implemented by the v0.1 Lynx adapter.',
+		TimeInput: 'Time input semantics are not implemented by the v0.1 Lynx adapter.',
+		Alert: 'Alert announcement semantics are not implemented by the v0.1 Lynx adapter.',
+		Progress: 'Progress semantics are not implemented by the v0.1 Lynx adapter.',
+		Sheet: 'Modal sheet semantics are not implemented by the v0.1 Lynx adapter.',
+		RichText: 'Structured rich-text semantics are not implemented by the v0.1 Lynx adapter.'
 	};
 	const message = unsupported[node.primitive];
 	if (message) context.diagnostics.push({ code: 'r4/lynx-primitive-unsupported', severity: 'error', message });
@@ -468,7 +518,7 @@ function textContent(nodes: R4Node[]): R4Value | null {
 
 function collectHandlers(nodes: R4Node[], handlers: Map<string, R4HandlerValue>) {
 	for (const node of nodes) {
-		if (node.kind === 'element') {
+		if (node.kind === 'element' || node.kind === 'component') {
 			const activation = node.props.activation;
 			if (activation?.kind === 'handler') handlers.set(node.id, activation);
 			collectHandlers(node.children, handlers);
@@ -580,8 +630,16 @@ function unique(values: string[]): string[] {
 
 function lynxRequirement(requirement: string): string {
 	const requirements: Record<string, string> = {
+		'boolean-input': 'lynx:switch-control',
+		'date-input': 'r4-host:date-picker',
 		'image-loading': 'lynx:image',
+		'live-feed': 'lynx:accessible-live-feed',
+		'modal-presentation': 'lynx:modal-presentation',
+		'multiline-input': 'lynx:xelement-textarea',
 		navigation: 'r4-host:navigation',
+		'numeric-input': 'lynx:xelement-number-input',
+		'selection-input': 'r4-host:selection-control',
+		'time-input': 'r4-host:time-picker',
 		'text-input': 'lynx:xelement-input'
 	};
 	return requirements[requirement] ?? requirement;

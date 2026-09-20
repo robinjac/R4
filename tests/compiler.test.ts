@@ -144,11 +144,101 @@ describe('R4 compiler', () => {
 		expect(result.ir?.requirements).toEqual(['image-loading', 'navigation', 'text-input']);
 	});
 
+	test('represents portable form callback payloads without DOM event references', () => {
+		const result = compileR4(`<script>
+      import { Input, Switch } from 'r4';
+      let name = $state('Ada');
+      let visible = $state(true);
+    </script>
+    <Input label="Name" value={name} onchange={(value) => name = value} />
+    <Switch label="Public profile" checked={visible} onchange={(checked) => visible = checked} />`);
+		expect(result.diagnostics).toEqual([]);
+		if (!result.ir) throw new Error('Fixture did not compile');
+		const input = flatten(result.ir.root).find((node) => node.kind === 'element' && node.primitive === 'Input');
+		const setting = flatten(result.ir.root).find((node) => node.kind === 'element' && node.primitive === 'Switch');
+		if (input?.kind !== 'element' || setting?.kind !== 'element') throw new Error('Form controls were not compiled');
+		expect(input.props.change).toMatchObject({
+			kind: 'handler',
+			parameters: ['value'],
+			writes: ['name'],
+			mutations: [{ target: 'name', operator: 'assign', value: { source: 'value', references: ['value'] } }]
+		});
+		expect(setting.props.change).toMatchObject({
+			kind: 'handler',
+			parameters: ['checked'],
+			writes: ['visible'],
+			mutations: [{ target: 'visible', operator: 'assign', value: { source: 'checked', references: ['checked'] } }]
+		});
+		expect(result.ir.requirements).toEqual(['boolean-input', 'text-input']);
+	});
+
+	test('represents mobile navigation, collections, forms, and feeds as generic UI intent', () => {
+		const result = compileR4(`<script>
+      import { Feed, FeedItem, Form, List, ListItem, Navigation, NavigationItem, Select, Text, Textarea } from 'r4';
+      let section = $state('today');
+      let message = $state('');
+      let submitted = $state(false);
+    </script>
+    <Navigation label="Primary"><NavigationItem selected={section === 'projects'} onselect={() => section = 'projects'}><Text>Projects</Text></NavigationItem></Navigation>
+    <List label="Projects"><ListItem><Text>Oak Street</Text></ListItem></List>
+    <Feed label="Assistant"><FeedItem author="R4"><Text>Ready</Text></FeedItem></Feed>
+    <Form label="Message" onsubmit={() => submitted = true}>
+      <Select label="Project" options={[{ value: 'oak', label: 'Oak Street' }]} />
+      <Textarea label="Message" value={message} onchange={(value) => message = value} />
+    </Form>`);
+		expect(result.diagnostics).toEqual([]);
+		if (!result.ir) throw new Error('Fixture did not compile');
+		const nodes = flatten(result.ir.root);
+		const navigation = nodes.find((node) => node.kind === 'element' && node.primitive === 'Navigation');
+		const item = nodes.find((node) => node.kind === 'element' && node.primitive === 'NavigationItem');
+		const form = nodes.find((node) => node.kind === 'element' && node.primitive === 'Form');
+		expect(navigation).toMatchObject({ kind: 'element', domain: 'navigation', intent: 'primary-navigation' });
+		expect(item).toMatchObject({
+			kind: 'element',
+			props: { selection: { kind: 'handler', writes: ['section'], mutations: [{ target: 'section', operator: 'assign' }] } }
+		});
+		expect(form).toMatchObject({
+			kind: 'element',
+			props: { submission: { kind: 'handler', writes: ['submitted'], mutations: [{ target: 'submitted', operator: 'assign' }] } }
+		});
+		expect(result.ir.requirements).toEqual(['live-feed', 'multiline-input', 'navigation', 'selection-input']);
+	});
+
+	test('preserves imported Svelte compositions as explicit dependency boundaries', () => {
+		const result = compileR4(`<script>
+      import ProjectCollection from './ProjectCollection.svelte';
+      import { Text } from 'r4';
+      let title = $state('Active projects');
+    </script>
+    <ProjectCollection title={title} onselect={(value) => title = value}><Text>Fallback</Text></ProjectCollection>`);
+		expect(result.diagnostics).toEqual([]);
+		if (!result.ir) throw new Error('Fixture did not compile');
+		const composition = flatten(result.ir.root).find((node) => node.kind === 'component');
+		expect(composition).toMatchObject({
+			kind: 'component',
+			name: 'ProjectCollection',
+			source: './ProjectCollection.svelte',
+			props: {
+				title: { kind: 'expression', dependencies: ['title'] },
+				onselect: { kind: 'handler', parameters: ['value'], writes: ['title'] }
+			}
+		});
+		if (composition?.kind !== 'component') throw new Error('Composition boundary was not compiled');
+		expect(result.ir.updates).toContainEqual({ from: 'title', to: `${composition.id}.title`, kind: 'property' });
+		expect(composition.children).toContainEqual(expect.objectContaining({ kind: 'element', primitive: 'Text' }));
+	});
+
 	test('rejects empty control names and preserves non-JSON expressions as source', () => {
-		const names = compileR4(`<script>import { Button, Input, View } from 'r4';</script>
+		const names = compileR4(`<script>import { Button, Input, Select, Switch, Textarea, View } from 'r4';</script>
       <Input label="" />
+			<Switch label="" />
+			<Textarea label="" />
+			<Select label="" options={[]} />
       <Button label=""><View /></Button>`);
 		expect(names.diagnostics).toContainEqual(expect.objectContaining({ code: 'r4/input-label-required', severity: 'error' }));
+		expect(names.diagnostics).toContainEqual(expect.objectContaining({ code: 'r4/switch-label-required', severity: 'error' }));
+		expect(names.diagnostics).toContainEqual(expect.objectContaining({ code: 'r4/textarea-label-required', severity: 'error' }));
+		expect(names.diagnostics).toContainEqual(expect.objectContaining({ code: 'r4/select-label-required', severity: 'error' }));
 		expect(names.diagnostics).toContainEqual(expect.objectContaining({ code: 'r4/action-name-required', severity: 'error' }));
 
 		const values = compileR4(`<script>import { Text } from 'r4'; const sparse = [,,]; const huge = 1e400;</script><Text>Values</Text>`);
@@ -159,7 +249,7 @@ describe('R4 compiler', () => {
 
 function flatten(nodes: R4Node[]): R4Node[] {
 	return nodes.flatMap((node) => {
-		if (node.kind === 'element') return [node, ...flatten(node.children)];
+		if (node.kind === 'element' || node.kind === 'component') return [node, ...flatten(node.children)];
 		if (node.kind === 'if') return [node, ...flatten(node.consequent), ...flatten(node.alternate)];
 		if (node.kind === 'each') return [node, ...flatten(node.children), ...flatten(node.fallback)];
 		return [node];

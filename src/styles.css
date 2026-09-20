@@ -32,9 +32,9 @@ button:focus-visible {
 .workbench-shell {
 	display: grid;
 	grid-template-areas:
-		"header header header"
-		"nav stage inspector";
-	grid-template-columns: 230px minmax(460px, 1fr) minmax(350px, 430px);
+		"header header header header header"
+		"nav nav-resizer stage inspector-resizer inspector";
+	grid-template-columns: var(--nav-width, 230px) 6px minmax(360px, 1fr) 6px var(--inspector-width, 430px);
 	grid-template-rows: 58px calc(100vh - 58px);
 	min-height: 100vh;
 	background: #eceae3;
@@ -43,7 +43,7 @@ button:focus-visible {
 .workbench-header {
 	grid-area: header;
 	display: grid;
-	grid-template-columns: 230px 1fr auto;
+	grid-template-columns: var(--nav-width, 230px) 1fr auto;
 	align-items: center;
 	border-bottom: 1px solid #9f9d96;
 	background: #171b1e;
@@ -147,6 +147,58 @@ button:focus-visible {
 	background: #e2e0d9;
 }
 
+.pane-resizer {
+	position: relative;
+	z-index: 3;
+	min-width: 0;
+	min-height: 0;
+	border: 0;
+	border-radius: 0;
+	background: #b8b5ad;
+	padding: 0;
+	touch-action: none;
+}
+
+.pane-resizer::after {
+	position: absolute;
+	background: #777d80;
+	content: '';
+	opacity: 0.55;
+}
+
+.pane-resizer:hover,
+.pane-resizer:focus-visible {
+	background: #f5b82e;
+}
+
+.nav-pane-resizer {
+	grid-area: nav-resizer;
+	cursor: col-resize;
+}
+
+.inspector-pane-resizer {
+	grid-area: inspector-resizer;
+	cursor: col-resize;
+}
+
+.nav-pane-resizer::after,
+.inspector-pane-resizer::after {
+	top: 50%;
+	left: 2px;
+	width: 2px;
+	height: 38px;
+	transform: translateY(-50%);
+}
+
+.workbench-shell.resizing {
+	user-select: none;
+}
+
+.workbench-shell[data-resize-target='navigation'],
+.workbench-shell[data-resize-target='inspector'] {
+	cursor: col-resize;
+}
+
 .rail-heading {
 	display: flex;
 	align-items: center;
@@ -209,28 +261,6 @@ button:focus-visible {
 .experiment-copy small {
 	color: #707679;
 	font: 0.63rem/1 var(--r4-font-mono);
-}
-
-.decision {
-	grid-column: 2;
-	width: max-content;
-	border-radius: 2px;
-	background: #d3d1ca;
-	color: #656a6d;
-	padding: 3px 5px;
-	font: 600 0.52rem/1 var(--r4-font-mono);
-	letter-spacing: 0.06em;
-	text-transform: uppercase;
-}
-
-.decision[data-status='keep'] {
-	background: #cce8d7;
-	color: #24623f;
-}
-
-.decision[data-status='modify'] {
-	background: #f4dcad;
-	color: #775411;
 }
 
 .rail-note {
@@ -436,10 +466,30 @@ button:focus-visible {
 	content: '';
 }
 
-.experiment-canvas {
+.preview-canvas-frame {
+	position: relative;
 	height: calc(100% - 29px);
+	overflow: hidden;
+	isolation: isolate;
+}
+
+.experiment-canvas {
+	height: 100%;
 	overflow: auto;
 	background: var(--r4-color-surface);
+}
+
+.preview-overlays {
+	position: absolute;
+	z-index: 20;
+	inset: 0;
+	overflow: hidden;
+	pointer-events: none;
+}
+
+.preview-field[data-platform='ios'] .preview-canvas-frame,
+.preview-field[data-platform='android'] .preview-canvas-frame {
+	height: calc(100% - 25px);
 }
 
 .experiment-canvas > :global([data-r4-primitive='Page']) {
@@ -591,6 +641,12 @@ button:focus-visible {
 	white-space: pre;
 }
 
+.code-loading {
+	padding: 17px;
+	color: #929ca1;
+	font: 0.67rem/1.6 var(--r4-font-mono);
+}
+
 .inspector-summary {
 	display: flex;
 	align-items: center;
@@ -697,15 +753,16 @@ button:focus-visible {
 @media (max-width: 1180px) {
 	.workbench-shell {
 		grid-template-areas:
-			"header header"
-			"nav stage"
-			"inspector inspector";
-		grid-template-columns: 210px minmax(0, 1fr);
-		grid-template-rows: 58px auto minmax(420px, 58vh);
+			"header header header"
+			"nav nav-resizer stage"
+			"inspector-resizer inspector-resizer inspector-resizer"
+			"inspector inspector inspector";
+		grid-template-columns: var(--nav-width, 210px) 6px minmax(0, 1fr);
+		grid-template-rows: 58px auto 6px var(--inspector-height, 520px);
 	}
 
 	.workbench-header {
-		grid-template-columns: 210px 1fr auto;
+		grid-template-columns: var(--nav-width, 210px) 1fr auto;
 	}
 
 	.research-nav,
@@ -717,11 +774,31 @@ button:focus-visible {
 		border-top: 1px solid #858886;
 		border-left: 0;
 	}
+
+	.inspector-pane-resizer {
+		cursor: row-resize;
+	}
+
+	.inspector-pane-resizer::after {
+		top: 2px;
+		left: 50%;
+		width: 38px;
+		height: 2px;
+		transform: translateX(-50%);
+	}
+
+	.workbench-shell[data-resize-target='inspector'] {
+		cursor: row-resize;
+	}
 }
 
 @media (max-width: 760px) {
 	.workbench-shell {
 		display: block;
+	}
+
+	.pane-resizer {
+		display: none;
 	}
 
 	.workbench-header {

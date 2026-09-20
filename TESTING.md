@@ -57,7 +57,7 @@ preview can scroll, and the page itself has no horizontal overflow. Using only t
 that every Workbench button receives a visible focus indicator and can be activated with Enter or
 Space.
 
-## Static deployment acceptance
+## Static build acceptance
 
 Build and preview the deployable artifact:
 
@@ -67,7 +67,6 @@ bun run preview
 ```
 
 Open `http://localhost:4173` and repeat the counter test. The static site is written to `build/`.
-GitHub Actions deploys that directory with `BASE_PATH` set to the repository name.
 
 ## Native Lynx acceptance
 

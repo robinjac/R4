@@ -4,6 +4,7 @@ export type {
 	DiagnosticSeverity,
 	JsonValue,
 	R4CompileResult,
+	R4ComponentNode,
 	R4Diagnostic,
 	R4EachNode,
 	R4Effect,

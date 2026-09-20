@@ -11,8 +11,8 @@ This repository is intentionally a vertical slice, not a complete framework.
 ## What works
 
 - Svelte 5 authoring with runes, snippets, TypeScript, and component composition.
-- Twelve experimental semantic primitives: `View`, `Stack`, `Grid`, `Layer`, `Text`, `Image`,
-  `Icon`, `Button`, `Input`, `Page`, `Scroll`, and `Link`.
+- Thirty-three experimental semantic primitives spanning layout, content, actions, navigation,
+  collections, forms, feedback, overlays, and structured text.
 - Direct semantic web output with SvelteKit SSR and hydration.
 - Build-time Svelte validation and modern-AST extraction into R4 Semantic IR v1.
 - State, derived-state, template dependency, mutation, effect, and targeted-update representation.

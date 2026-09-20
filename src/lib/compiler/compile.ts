@@ -37,6 +37,11 @@ type StateDraft = {
 	rangeNode: AstNode;
 };
 
+type ComponentBinding = {
+	name: string;
+	source: string;
+};
+
 export interface CompileR4Options {
 	filename?: string;
 	primitiveModules?: string[];
@@ -47,6 +52,7 @@ type CompilerContext = {
 	lineStarts: number[];
 	filename: string;
 	primitiveBindings: Map<string, PrimitiveName>;
+	componentBindings: Map<string, ComponentBinding>;
 	reactiveNames: Set<string>;
 	bindingNames: Set<string>;
 	templateLocals: Set<string>;
@@ -58,7 +64,25 @@ type CompilerContext = {
 
 const propNames: Partial<Record<PrimitiveName, Record<string, string>>> = {
 	Button: { onclick: 'activation', disabled: 'disabled', variant: 'emphasis', label: 'accessibilityLabel' },
-	Input: { oninput: 'change', label: 'label', description: 'description' },
+	Input: { onchange: 'change', label: 'label', description: 'description' },
+	Switch: { onchange: 'change', label: 'label', description: 'description' },
+	Navigation: { label: 'accessibilityLabel' },
+	NavigationItem: { onselect: 'selection', label: 'accessibilityLabel' },
+	List: { label: 'accessibilityLabel' },
+	ListItem: { onselect: 'selection', label: 'accessibilityLabel' },
+	Feed: { label: 'accessibilityLabel' },
+	Badge: { label: 'accessibilityLabel' },
+	Tabs: { label: 'accessibilityLabel' },
+	Tab: { onselect: 'selection', label: 'accessibilityLabel' },
+	Form: { onsubmit: 'submission', label: 'accessibilityLabel' },
+	Textarea: { onchange: 'change', label: 'label', description: 'description' },
+	NumberInput: { onchange: 'change', label: 'label', description: 'description' },
+	Select: { onchange: 'change', label: 'label', description: 'description' },
+	Checkbox: { onchange: 'change', label: 'label', description: 'description' },
+	DateInput: { onchange: 'change', label: 'label', description: 'description' },
+	TimeInput: { onchange: 'change', label: 'label', description: 'description' },
+	Sheet: { onclose: 'dismissal' },
+	RichText: { label: 'accessibilityLabel' },
 	Link: { href: 'destination', external: 'external', label: 'accessibilityLabel' },
 	Image: { alt: 'alternative', src: 'source' },
 	Icon: { label: 'accessibilityLabel' },
@@ -67,7 +91,7 @@ const propNames: Partial<Record<PrimitiveName, Record<string, string>>> = {
 	Text: { role: 'textRole' }
 };
 
-const handlerProps = new Set(['activation', 'keyboardActivation', 'change']);
+const handlerProps = new Set(['activation', 'keyboardActivation', 'change', 'selection', 'submission', 'dismissal']);
 const allPlatforms = ['web', 'ios', 'android', 'macos', 'windows'] as const;
 const portableGlobals = new Set([
 	'Array',
@@ -131,6 +155,7 @@ export function compileR4(source: string, options: CompileR4Options = {}): R4Com
 		lineStarts: getLineStarts(source),
 		filename,
 		primitiveBindings: new Map(),
+		componentBindings: new Map(),
 		reactiveNames: new Set(),
 		bindingNames: new Set(),
 		templateLocals: new Set(),
@@ -224,7 +249,16 @@ function collectScript(ast: AST.Root, primitiveModules: Set<string>, context: Co
 	for (const statement of body) {
 		if (statement.type === 'ImportDeclaration') {
 			const source = literalValue(statement.source);
-			if (typeof source !== 'string' || !primitiveModules.has(source)) continue;
+			if (typeof source !== 'string') continue;
+			if (source.endsWith('.svelte')) {
+				for (const specifier of nodeArray(statement.specifiers)) {
+					if (specifier.type !== 'ImportDefaultSpecifier') continue;
+					const local = identifierName(specifier.local);
+					if (local) context.componentBindings.set(local, { name: local, source });
+				}
+				continue;
+			}
+			if (!primitiveModules.has(source)) continue;
 
 			for (const specifier of nodeArray(statement.specifiers)) {
 				if (specifier.type !== 'ImportSpecifier') continue;
@@ -410,7 +444,8 @@ function compileFragment(fragment: AST.Fragment, context: CompilerContext): R4No
 function compileComponent(node: AstNode, context: CompilerContext): R4Node | null {
 	const localName = typeof node.name === 'string' ? node.name : '';
 	const primitive = context.primitiveBindings.get(localName);
-	if (!primitive) {
+	const composition = context.componentBindings.get(localName);
+	if (!primitive && !composition) {
 		context.diagnostics.push({
 			code: 'r4/unknown-component',
 			severity: 'error',
@@ -421,13 +456,12 @@ function compileComponent(node: AstNode, context: CompilerContext): R4Node | nul
 		return null;
 	}
 
-	const definition = primitiveManifest[primitive];
 	const props: Record<string, R4Value> = {};
 	const originalProps = new Set<string>();
 	for (const attribute of nodeArray(node.attributes)) {
 		if (attribute.type === 'Attribute') {
 			const originalName = typeof attribute.name === 'string' ? attribute.name : '';
-			const semanticName = propNames[primitive]?.[originalName] ?? originalName;
+			const semanticName = (primitive ? propNames[primitive]?.[originalName] : undefined) ?? originalName;
 			originalProps.add(originalName);
 			props[semanticName] = attributeValue(attribute, context, handlerProps.has(semanticName) || originalName.startsWith('on'));
 			continue;
@@ -457,6 +491,20 @@ function compileComponent(node: AstNode, context: CompilerContext): R4Node | nul
 
 	const fragment = node.fragment as AST.Fragment;
 	const children = fragment ? compileFragment(fragment, context) : [];
+	if (composition) {
+		return {
+			kind: 'component',
+			id: nextId(composition.name.toLowerCase(), context),
+			name: composition.name,
+			source: composition.source,
+			props,
+			children,
+			range: range(node, context)
+		};
+	}
+
+	if (!primitive) return null;
+	const definition = primitiveManifest[primitive];
 	applySemanticDiagnostics(primitive, props, originalProps, children, node, context);
 	collectRequirement(primitive, context);
 
@@ -566,11 +614,44 @@ function applySemanticDiagnostics(
 		});
 	}
 
-	if (primitive === 'Button' && !hasSemanticName(props.accessibilityLabel) && !hasAccessibleText(children)) {
+	if (primitive === 'Switch' && !hasSemanticName(props.label)) {
+		context.diagnostics.push({
+			code: 'r4/switch-label-required',
+			severity: 'error',
+			message: 'Switch requires a semantic label.',
+			range: range(node, context),
+			platforms: [...allPlatforms]
+		});
+	}
+
+	const labeledInputs: Partial<Record<PrimitiveName, string>> = {
+		Textarea: 'Textarea',
+		NumberInput: 'NumberInput',
+		Select: 'Select',
+		Checkbox: 'Checkbox',
+		DateInput: 'DateInput',
+		TimeInput: 'TimeInput'
+	};
+	const labeledInput = labeledInputs[primitive];
+	if (labeledInput && !hasSemanticName(props.label)) {
+		context.diagnostics.push({
+			code: `r4/${primitive.toLowerCase()}-label-required`,
+			severity: 'error',
+			message: `${labeledInput} requires a semantic label.`,
+			range: range(node, context),
+			platforms: [...allPlatforms]
+		});
+	}
+
+	if (
+		(primitive === 'Button' || primitive === 'NavigationItem' || primitive === 'ListItem' || primitive === 'Tab') &&
+		!hasSemanticName(props.accessibilityLabel) &&
+		!hasAccessibleText(children)
+	) {
 		context.diagnostics.push({
 			code: 'r4/action-name-required',
 			severity: 'error',
-			message: 'Button requires content or an accessibility label.',
+			message: `${primitive} requires content or an accessibility label.`,
 			range: range(node, context),
 			platforms: [...allPlatforms]
 		});
@@ -590,7 +671,7 @@ function hasAccessibleText(nodes: R4Node[]): boolean {
 			if (node.parts.some((part) => part.kind === 'expression' || (typeof part.value === 'string' && part.value.trim().length > 0))) return true;
 			continue;
 		}
-		if (node.kind === 'element') {
+		if (node.kind === 'element' || node.kind === 'component') {
 			if (hasSemanticName(node.props.accessibilityLabel) || hasAccessibleText(node.children)) return true;
 			continue;
 		}
@@ -605,6 +686,16 @@ function hasAccessibleText(nodes: R4Node[]): boolean {
 
 function collectRequirement(primitive: PrimitiveName, context: CompilerContext) {
 	if (primitive === 'Input') context.requirements.add('text-input');
+	if (primitive === 'Switch') context.requirements.add('boolean-input');
+	if (primitive === 'Textarea') context.requirements.add('multiline-input');
+	if (primitive === 'NumberInput') context.requirements.add('numeric-input');
+	if (primitive === 'Select') context.requirements.add('selection-input');
+	if (primitive === 'Checkbox') context.requirements.add('boolean-input');
+	if (primitive === 'DateInput') context.requirements.add('date-input');
+	if (primitive === 'TimeInput') context.requirements.add('time-input');
+	if (primitive === 'Navigation' || primitive === 'NavigationItem') context.requirements.add('navigation');
+	if (primitive === 'Sheet') context.requirements.add('modal-presentation');
+	if (primitive === 'Feed') context.requirements.add('live-feed');
 	if (primitive === 'Image') context.requirements.add('image-loading');
 	if (primitive === 'Link') context.requirements.add('navigation');
 }
@@ -639,16 +730,22 @@ function attributeValue(attribute: AstNode, context: CompilerContext, handler: b
 	};
 }
 
-function expressionValue(node: AstNode, context: CompilerContext): R4Value {
+function expressionValue(node: AstNode, context: CompilerContext, allowedReferences = new Set<string>()): R4Value {
 	const staticValue = evaluateStatic(node);
 	if (staticValue.ok) return { kind: 'literal', value: staticValue.value };
-	return forceExpression(node, context);
+	return forceExpression(node, context, allowedReferences);
 }
 
-function forceExpression(node: AstNode, context: CompilerContext): R4ExpressionValue {
+function forceExpression(node: AstNode, context: CompilerContext, allowedReferences = new Set<string>()): R4ExpressionValue {
 	const references = collectReferences(node);
 	for (const reference of references) {
-		if (context.bindingNames.has(reference) || context.templateLocals.has(reference) || portableGlobals.has(reference)) continue;
+		if (
+			context.bindingNames.has(reference) ||
+			context.templateLocals.has(reference) ||
+			portableGlobals.has(reference) ||
+			allowedReferences.has(reference)
+		)
+			continue;
 		context.diagnostics.push({
 			code: 'r4/unresolved-expression-reference',
 			severity: 'error',
@@ -693,7 +790,8 @@ function handlerValue(node: AstNode, context: CompilerContext): R4HandlerValue {
 function collectMutations(node: AstNode, context: CompilerContext): R4Mutation[] {
 	const mutations: R4Mutation[] = [];
 	let unsupported = false;
-	const locals = new Set(functionParameters(node));
+	const parameters = new Set(functionParameters(node));
+	const locals = new Set(parameters);
 	const body = isFunction(node) ? asNode(node.body) : node;
 	if (!body) return mutations;
 
@@ -712,7 +810,7 @@ function collectMutations(node: AstNode, context: CompilerContext): R4Mutation[]
 	for (const statement of expressions) {
 		if (statement.type === 'EmptyStatement') continue;
 		const expression = statement.type === 'ExpressionStatement' ? asNode(statement.expression) : statement;
-		const mutation = expression ? mutationFromExpression(expression, locals, context) : null;
+		const mutation = expression ? mutationFromExpression(expression, locals, parameters, context) : null;
 		if (mutation) {
 			mutations.push(mutation);
 			continue;
@@ -740,7 +838,12 @@ function collectMutations(node: AstNode, context: CompilerContext): R4Mutation[]
 	return mutations;
 }
 
-function mutationFromExpression(node: AstNode, locals: Set<string>, context: CompilerContext): R4Mutation | null {
+function mutationFromExpression(
+	node: AstNode,
+	locals: Set<string>,
+	parameters: Set<string>,
+	context: CompilerContext
+): R4Mutation | null {
 	if (node.type === 'UpdateExpression') {
 		const target = identifierName(node.argument);
 		if (!target || locals.has(target) || !context.reactiveNames.has(target)) return null;
@@ -760,7 +863,7 @@ function mutationFromExpression(node: AstNode, locals: Set<string>, context: Com
 	const operator = operators[String(node.operator)];
 	if (!operator) return null;
 	const valueNode = asNode(node.right);
-	return { target, operator, value: valueNode ? expressionValue(valueNode, context) : undefined };
+	return { target, operator, value: valueNode ? expressionValue(valueNode, context, parameters) : undefined };
 }
 
 function collectReferences(node: AstNode): string[] {

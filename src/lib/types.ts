@@ -35,3 +35,9 @@ export interface BoxProps {
 	height?: Size;
 	padding?: Insets;
 }
+
+export interface SelectOption {
+	value: string;
+	label: string;
+	disabled?: boolean;
+}

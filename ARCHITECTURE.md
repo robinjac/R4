@@ -106,7 +106,8 @@ exists.
 ### Workbench
 
 `src/workbench` is private application code. `src/research/**/*.r4.svelte` files are the actual API
-experiments. Three synchronized Vite globs load each component, source file, and compiler artifact.
+experiments. Synchronized Vite globs load each component, source file, compiler artifact, and lazy
+syntax-highlighting payload.
 
 The Workbench currently supplies the first slices of API Lab, Layout Lab, Platform Lab, Semantic IR
 Inspector, and Accessibility Lab. Its architecture can add real host/device sessions and performance
@@ -117,6 +118,7 @@ telemetry without replacing the experiment format.
 v0.1 supports:
 
 - R4 primitives imported by name or alias from `r4`, `$lib`, or `$lib/index.js`;
+- default-imported local `.svelte` components as explicit composition boundaries;
 - static JSON-like props and dynamic expressions;
 - text interpolation;
 - `$state`, `$derived`, `$props`, and `$effect` dependency representation;
@@ -126,7 +128,7 @@ v0.1 supports:
 It fails or warns for:
 
 - raw HTML/native elements in portable experiment markup;
-- unknown local components;
+- unknown components that are neither R4 primitives nor default-imported `.svelte` compositions;
 - spreads, actions, transitions, bindings, raw HTML, and other unsupported directives;
 - component-scoped CSS in portable projection;
 - interactions whose semantics cannot be inferred, such as clickable `View`;
@@ -157,8 +159,7 @@ HTML, browser URLs, keyboard behavior, and Svelte's targeted client updates.
 1. Compare direct Lynx framework integration with the contained ReactLynx adapter using startup,
    update, threading, accessibility, and bundle metrics.
 2. Add an actual R4 Host session protocol and show device-reported trees beside simulations.
-3. Decide whether reusable local Svelte components should inline, become semantic functions, or form
-   separate IR units.
+3. Resolve imported composition boundaries into linked or inlined semantic units for native lowering.
 4. Expand expression and control-flow lowering without turning the compiler into a JavaScript
    interpreter.
 5. Prototype navigation and one capability through an R4-owned ABI, independent of renderer.

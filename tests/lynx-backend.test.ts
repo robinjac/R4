@@ -49,12 +49,51 @@ describe('Lynx backend', () => {
 	});
 
 	test('maps semantic capabilities to backend-specific requirements', () => {
-		const result = compileR4(`<script>import { Input } from 'r4';</script><Input label="Name" />`);
+		const result = compileR4(`<script>import { Input, Switch } from 'r4';</script><Input label="Name" /><Switch label="Public profile" />`);
 		if (!result.ir) throw new Error('Fixture did not compile');
 		const artifact = lowerToLynx(result.ir);
-		expect(result.ir.requirements).toEqual(['text-input']);
+		expect(result.ir.requirements).toEqual(['boolean-input', 'text-input']);
 		expect(artifact.requirements).toContain('lynx:xelement-input');
+		expect(artifact.requirements).toContain('lynx:switch-control');
 		expect(artifact.requirements).not.toContain('text-input');
+		expect(artifact.diagnostics).toContainEqual(
+			expect.objectContaining({ code: 'r4/lynx-primitive-unsupported', message: expect.stringContaining('Switch state') })
+		);
+	});
+
+	test('fails closed for mobile application primitives without verified Lynx policies', () => {
+		const result = compileR4(`<script>
+      import { Feed, Form, Navigation, Select, Sheet, Textarea } from 'r4';
+      let open = $state(true);
+    </script>
+    <Navigation label="Primary" />
+    <Feed label="Assistant" />
+    <Form label="Report"><Select label="Project" options={[]} /><Textarea label="Notes" /></Form>
+    <Sheet title="Report" {open} onclose={() => open = false} />`);
+		if (!result.ir) throw new Error('Fixture did not compile');
+		const artifact = lowerToLynx(result.ir);
+		expect(artifact.requirements).toEqual(
+			expect.arrayContaining(['lynx:accessible-live-feed', 'lynx:modal-presentation', 'lynx:xelement-textarea', 'r4-host:navigation', 'r4-host:selection-control'])
+		);
+		expect(artifact.diagnostics).toContainEqual(
+			expect.objectContaining({ code: 'r4/lynx-primitive-unsupported', message: expect.stringContaining('Adaptive navigation') })
+		);
+		expect(artifact.diagnostics).toContainEqual(
+			expect.objectContaining({ code: 'r4/lynx-primitive-unsupported', message: expect.stringContaining('Modal sheet') })
+		);
+		expect(artifact.diagnostics).not.toContainEqual(expect.objectContaining({ code: 'r4/lynx-prop-unsupported' }));
+	});
+
+	test('fails closed at unresolved composition boundaries', () => {
+		const result = compileR4(`<script>import ProjectCard from './ProjectCard.svelte';</script><ProjectCard title="Oak Street" />`);
+		if (!result.ir) throw new Error('Fixture did not compile');
+		const artifact = lowerToLynx(result.ir);
+		expect(artifact.diagnostics).toContainEqual(
+			expect.objectContaining({
+				code: 'r4/lynx-composition-unsupported',
+				message: 'Composition ProjectCard from ./ProjectCard.svelte must be resolved before Lynx lowering.'
+			})
+		);
 	});
 
 	test('escapes templates and preserves image and heading accessibility semantics', () => {

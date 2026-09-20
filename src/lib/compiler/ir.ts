@@ -66,8 +66,18 @@ export interface R4ElementNode {
 	kind: 'element';
 	id: string;
 	primitive: PrimitiveName;
-	domain: 'structure' | 'layout' | 'content' | 'action' | 'input' | 'application' | 'navigation';
+	domain: 'structure' | 'layout' | 'content' | 'action' | 'input' | 'application' | 'navigation' | 'collection' | 'feedback' | 'overlay';
 	intent: string;
+	props: Record<string, R4Value>;
+	children: R4Node[];
+	range: SourceRange;
+}
+
+export interface R4ComponentNode {
+	kind: 'component';
+	id: string;
+	name: string;
+	source: string;
 	props: Record<string, R4Value>;
 	children: R4Node[];
 	range: SourceRange;
@@ -101,7 +111,7 @@ export interface R4EachNode {
 	range: SourceRange;
 }
 
-export type R4Node = R4ElementNode | R4TextNode | R4IfNode | R4EachNode;
+export type R4Node = R4ElementNode | R4ComponentNode | R4TextNode | R4IfNode | R4EachNode;
 
 export interface R4StateBinding {
 	name: string;
